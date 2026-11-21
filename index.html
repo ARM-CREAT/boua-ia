@@ -3088,8 +3088,9 @@ contenu complet du document
           ? 'TEMPS RÉEL : la recherche Google est disponible. Pour toute information récente ou susceptible d’avoir changé (actualités, élections, dates d’événements, prix, météo, résultats, lois, personnes en poste), lance une recherche AVANT de répondre, base ta réponse sur les résultats trouvés, et indique la date et la source de l’information.'
           : 'La recherche web est désactivée : pour toute information récente, préviens que ta réponse peut être dépassée et invite à activer « Recherche Web ».',
         ctx.mustSearch
-          ? 'OBLIGATOIRE POUR CETTE QUESTION : effectue une recherche Google avant de répondre. Si les résultats contredisent tes connaissances internes, ce sont les résultats de recherche qui ont raison. Si tu ne trouves pas d’information fiable, dis-le clairement au lieu de deviner.'
+          ? 'OBLIGATOIRE POUR CETTE QUESTION : appuie-toi sur les RÉSULTATS DE RECHERCHE WEB fournis avec la question (ou sur ta recherche Google). Si ces résultats contredisent tes connaissances internes, ce sont les résultats qui ont raison. Si aucun résultat ne répond à la question, dis clairement que tu n’as pas pu vérifier l’information au lieu de deviner.'
           : '',
+        'N’écris JAMAIS de texte simulant une recherche (comme « Recherche sur… » ou une liste de mots-clés) : soit tu utilises de vrais résultats, soit tu dis que tu n’as pas pu vérifier.',
         `LANGUE OBLIGATOIRE DE RÉPONSE : Réponds intégralement en ${langName}, sauf si l'utilisateur demande une autre langue.`,
         tierNotes[state.tier] || tierNotes.complete,
         ctx.agentPrompt ? `RÔLE EXPERT ACTIF (${ctx.agentName}) : ${ctx.agentPrompt}` : '',
@@ -3439,6 +3440,10 @@ contenu complet du document
           contents: toGeminiContents(chatMessages),
           systemInstruction: buildSystemInstruction(),
           web: Boolean(state.webSearchEnabled || state.mode === 'search' || state.turnContext?.forceWeb),
+          mustSearch: Boolean(state.turnContext?.mustSearch),
+          alwaysSearch: state.mode === 'search',
+          query: state.turnContext?.query || '',
+          lang: state.lang,
           temperature: state.mode === 'builder' || state.mode === 'maths' ? 0.2 : 0.5,
         },
         signal
@@ -3456,6 +3461,13 @@ contenu complet du document
         }
         if (json?.boua) {
           meta = json.boua;
+          if (meta.searched) searched = true;
+          for (const src of meta.sources || []) {
+            if (src?.uri && /^https?:\/\//i.test(src.uri) && !seen.has(src.uri)) {
+              seen.add(src.uri);
+              sources.push({ uri: String(src.uri).slice(0, 2000), title: String(src.title || src.uri).slice(0, 300) });
+            }
+          }
           return;
         }
         const cand = json?.candidates?.[0];
@@ -4036,6 +4048,7 @@ contenu complet du document
       const agent = getActiveAgent();
       const ctx = { agentName: agent.name, agentPrompt: agent.prompt || '', ...extra };
       const webOn = state.webSearchEnabled || state.mode === 'search' || ctx.forceWeb;
+      ctx.query = String(queryText || '').slice(0, 300);
       if (webOn && (TIME_SENSITIVE_RE.test(String(queryText || '')) || ctx.forceSearch)) ctx.mustSearch = true;
       if (brain.memory.enabled && brain.memory.facts.length) {
         ctx.memory = brain.memory.facts
