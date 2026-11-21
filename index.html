@@ -3083,8 +3083,12 @@ contenu complet du document
       return [
         `Tu es BOUA AI, une intelligence artificielle polyvalente qui peut tout faire : programmation (web, Android, back-end), création de sites et d'applications, rédaction et traduction (français, espagnol, anglais, arabe), mathématiques et sciences, analyse de données et de documents, recherche, stratégie business, finance, droit, éducation, vidéo et image. Tu t'adaptes à chaque demande légitime et tu fournis toujours un résultat concret et utilisable.`,
         `Date et heure actuelles de l'utilisateur : ${today}.`,
+        'CONNAISSANCES LIMITÉES DANS LE TEMPS : tes connaissances internes s’arrêtent plusieurs mois AVANT la date du jour ci-dessus. Des événements importants ont pu se produire depuis (élections anticipées, changements de gouvernement, nouvelles lois, prix). Ne présente JAMAIS tes connaissances internes comme l’état actuel du monde.',
         state.webSearchEnabled || state.mode === 'search' || ctx.forceWeb
-          ? 'TEMPS RÉEL : la recherche Google est disponible. Utilise-la pour toute information récente ou susceptible d’avoir changé (actualités, prix, météo, résultats, lois, personnes en poste) et indique la date de l’information.'
+          ? 'TEMPS RÉEL : la recherche Google est disponible. Pour toute information récente ou susceptible d’avoir changé (actualités, élections, dates d’événements, prix, météo, résultats, lois, personnes en poste), lance une recherche AVANT de répondre, base ta réponse sur les résultats trouvés, et indique la date et la source de l’information.'
+          : 'La recherche web est désactivée : pour toute information récente, préviens que ta réponse peut être dépassée et invite à activer « Recherche Web ».',
+        ctx.mustSearch
+          ? 'OBLIGATOIRE POUR CETTE QUESTION : effectue une recherche Google avant de répondre. Si les résultats contredisent tes connaissances internes, ce sont les résultats de recherche qui ont raison. Si tu ne trouves pas d’information fiable, dis-le clairement au lieu de deviner.'
           : '',
         `LANGUE OBLIGATOIRE DE RÉPONSE : Réponds intégralement en ${langName}, sauf si l'utilisateur demande une autre langue.`,
         tierNotes[state.tier] || tierNotes.complete,
@@ -3441,6 +3445,8 @@ contenu complet du document
       );
       let text = '';
       let streamError = '';
+      let meta = null;
+      let searched = false;
       const sources = [];
       const seen = new Set();
       await readEventStream(res, (json) => {
@@ -3448,7 +3454,13 @@ contenu complet du document
           streamError = json.error.message || 'Erreur Gemini';
           return;
         }
+        if (json?.boua) {
+          meta = json.boua;
+          return;
+        }
         const cand = json?.candidates?.[0];
+        const gm = cand?.groundingMetadata;
+        if (gm && ((gm.webSearchQueries || []).length || (gm.groundingChunks || []).length)) searched = true;
         const piece = cand?.content?.parts?.map((p) => (p.thought ? '' : p.text || '')).join('') || '';
         if (piece) {
           text += piece;
@@ -3463,7 +3475,7 @@ contenu complet du document
         }
       });
       if (!text) throw new Error(streamError || 'Réponse vide de BOUA Cloud.');
-      return { rawText: text, sources };
+      return { rawText: text, sources, webChecked: searched || sources.length > 0, webAttempted: Boolean(meta?.webAvailable), model: meta?.model };
     }
 
     async function invokeSingleEngine(providerId, chatMessages, signal, onDelta) {
@@ -4017,9 +4029,14 @@ contenu complet du document
       return merged;
     }
 
+    /** Questions dont la réponse change avec le temps : la recherche web devient obligatoire */
+    const TIME_SENSITIVE_RE = /(actualit|aujourd|hier|demain|cette (semaine|année)|récent|dernier|dernière|élection|elecci|election|vote|sondage|encuesta|président|presidente|president|ministre|ministro|gouvernement|gobierno|government|roi |rey |prix|precio|price|tarif|coût|cours|bourse|taux|euribor|inflation|météo|tiempo hace|weather|résultat|resultado|result|score|match|classement|loi |ley |décret|decreto|réglementation|normativa|nouveau|nueva|nuevo|\b20(2[4-9]|3\d)\b|qui est|quién es|who is|quand |cuándo|when |news|noticias|en directo|live)/i;
+
     function prepareTurnContext(queryText, extra = {}) {
       const agent = getActiveAgent();
       const ctx = { agentName: agent.name, agentPrompt: agent.prompt || '', ...extra };
+      const webOn = state.webSearchEnabled || state.mode === 'search' || ctx.forceWeb;
+      if (webOn && (TIME_SENSITIVE_RE.test(String(queryText || '')) || ctx.forceSearch)) ctx.mustSearch = true;
       if (brain.memory.enabled && brain.memory.facts.length) {
         ctx.memory = brain.memory.facts
           .slice(0, 60)
@@ -4569,6 +4586,8 @@ contenu complet du document
           const o = { role: m.role === 'assistant' ? 'assistant' : 'user', content: String(m.content || '').slice(0, CLOUD_LIMITS.MAX_MSG_CHARS) };
           if (m.engineUsed) o.engineUsed = m.engineUsed;
           if (m.isError) o.isError = true;
+          if (m.webChecked) o.webChecked = true;
+          if (m.timeSensitive) o.timeSensitive = true;
           if (m.generatedImage) o.hadImage = true; // l'image reste sur l'appareil (trop lourde pour le cloud)
           if (Array.isArray(m.sources) && m.sources.length) o.sources = m.sources.slice(0, 12).map((s) => ({ uri: String(s.uri).slice(0, 2000), title: String(s.title).slice(0, 300) }));
           if (Array.isArray(m.kbSources) && m.kbSources.length) o.kbSources = m.kbSources.slice(0, 10).map((x) => String(x).slice(0, 120));
@@ -4599,6 +4618,8 @@ contenu complet du document
           };
           if (ENGINE_META[m.engineUsed]) msg.engineUsed = m.engineUsed;
           if (m.isError) msg.isError = true;
+          if (m.webChecked) msg.webChecked = true;
+          if (m.timeSensitive) msg.timeSensitive = true;
           if (Array.isArray(m.sources)) msg.sources = m.sources.filter((s) => /^https?:\/\//i.test(s?.uri || '')).map((s) => ({ uri: str(s.uri, 2000), title: str(s.title, 300) }));
           if (Array.isArray(m.kbSources)) msg.kbSources = m.kbSources.map((x) => str(x, 120));
           if (m.hadImage && localImages.has(msg.content)) msg.generatedImage = localImages.get(msg.content);
@@ -5399,6 +5420,15 @@ contenu complet du document
                     : ''
                 }
                 ${
+                  m.engineUsed === 'boua' && !m.isError && !m.isLocal
+                    ? m.webChecked
+                      ? `<div class="mt-2 inline-flex items-center gap-1.5 px-2 py-0.5 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-[11px] text-emerald-300">🌐 Vérifié sur le web${m.sources?.length ? ` · ${m.sources.length} source(s)` : ''}</div>`
+                      : m.timeSensitive || !state.webSearchEnabled
+                        ? `<div class="mt-2 p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-[11px] text-amber-200 flex flex-wrap items-center gap-2"><span>⚠️ Réponse sans recherche web : les informations récentes peuvent être dépassées ou fausses.</span>${isLast && !state.isLoading ? '<button type="button" data-reverify class="px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/30 font-semibold">🔄 Revérifier sur le web</button>' : ''}</div>`
+                        : ''
+                    : ''
+                }
+                ${
                   m.kbSources && m.kbSources.length
                     ? `<div class="mt-2 flex flex-wrap gap-1.5">${m.kbSources.map((n) => `<span class="px-2 py-0.5 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-[11px] text-cyan-200">📚 ${escapeHtml(n)}</span>`).join('')}</div>`
                     : ''
@@ -5427,6 +5457,11 @@ contenu complet du document
       enhanceRendered(container);
 
       container.querySelector('[data-regen]')?.addEventListener('click', regenerateLast);
+      container.querySelector('[data-reverify]')?.addEventListener('click', () => {
+        state.webSearchEnabled = true;
+        renderModesBar();
+        regenerateLast({ forceWeb: true, forceSearch: true });
+      });
       container.querySelectorAll('[data-open-account]').forEach((b) => b.addEventListener('click', () => document.getElementById('btn-open-account').click()));
       container.querySelector('[data-edit-last]')?.addEventListener('click', editLastUserMessage);
 
@@ -5881,7 +5916,7 @@ contenu complet du document
       setLoadingUI(true);
       state.abortController = new AbortController();
       const signal = state.abortController.signal;
-      prepareTurnContext(queryText, { forceWeb: Boolean(opts.forceWeb) });
+      prepareTurnContext(queryText, { forceWeb: Boolean(opts.forceWeb), forceSearch: Boolean(opts.forceSearch) });
       const contextMessages = buildContextMessages(chat.messages);
 
       try {
@@ -5952,6 +5987,8 @@ contenu complet du document
         msg.sources = result.sources || [];
         msg.engineUsed = result.engineUsed;
         msg.fallbackFrom = result.fallbackFrom;
+        msg.webChecked = Boolean(result.webChecked);
+        msg.timeSensitive = Boolean(state.turnContext?.mustSearch);
         if (state.turnContext?.knowledgeSources?.length) msg.kbSources = state.turnContext.knowledgeSources;
         delete msg.streaming;
         applyParsedOutputs(parseAiReply(result.rawText));
@@ -6041,13 +6078,13 @@ contenu complet du document
     }
 
     /** Régénérer la dernière réponse */
-    async function regenerateLast() {
+    async function regenerateLast(opts = {}) {
       const chat = getActiveChat();
       if (!chat || state.isLoading) return;
       while (chat.messages.length && chat.messages[chat.messages.length - 1].role === 'assistant') chat.messages.pop();
       const lastUser = [...chat.messages].reverse().find((m) => m.role === 'user');
       if (!lastUser) return;
-      await runAssistantTurn(chat, lastUser.content);
+      await runAssistantTurn(chat, lastUser.content, opts && !(opts instanceof Event) ? opts : {});
     }
 
     /** Modifier le dernier message envoyé */
