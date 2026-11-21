@@ -130,6 +130,10 @@ function rateLimited(uid) {
 
 /* ---------------- Choix automatique du modèle Gemini ---------------- */
 let modelCache = { text: [], image: [], exp: 0 };
+// Modèles temporairement écartés (quota nul, retirés…) pour aller directement vers un modèle qui répond
+const badModels = new Map(); // nom -> horodatage de fin d'exclusion
+const isBad = (m) => (badModels.get(m) || 0) > Date.now();
+const markBad = (m, ms) => badModels.set(m, Date.now() + ms);
 
 function versionOf(name) {
   const m = name.match(/gemini-(\d+(?:\.\d+)?)/);
@@ -144,7 +148,8 @@ function versionOf(name) {
 export function pickModels(models) {
   const gen = models.filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => m.name.replace(/^models\//, ''));
   const notSpecial = (n) => !/(image|tts|audio|live|embedding|vision|thinking|robotics|computer|exp|customtools|-\d{3,}$)/.test(n);
-  const flash = gen.filter((n) => /^gemini-[\d.]+-flash/.test(n) && notSpecial(n));
+  // Les modèles Gemini 2.x sont retirés par Google (« no longer available to new users »)
+  const flash = gen.filter((n) => /^gemini-[\d.]+-flash/.test(n) && notSpecial(n) && versionOf(n) >= 3);
   const byVersion = (a, b) => versionOf(b) - versionOf(a);
   const stable = flash.filter((n) => !/preview/.test(n));
   const text = [
@@ -153,7 +158,7 @@ export function pickModels(models) {
     ...gen.filter((n) => /^gemini-flash(-lite)?-latest$/.test(n)),
     ...flash.filter((n) => /preview/.test(n)).sort(byVersion),
   ];
-  const images = gen.filter((n) => /^gemini-[\d.]+-flash.*image/.test(n) && !/tts|audio|live/.test(n));
+  const images = gen.filter((n) => /^gemini-[\d.]+-flash.*image/.test(n) && !/tts|audio|live/.test(n) && versionOf(n) >= 3);
   const imageList = [...images.filter((n) => !/preview/.test(n)).sort(byVersion), ...images.filter((n) => /preview/.test(n)).sort(byVersion)];
   return { text: [...new Set(text)], image: imageList };
 }
@@ -197,7 +202,7 @@ export default async function handler(req) {
     // Diagnostic sans secret : https://boua-ia.vercel.app/api/chat
     const keys = [env('GEMINI_API_KEY'), env('GEMINI_API_KEY_2'), env('GEMINI_API_KEY_3'), ...env('GEMINI_API_KEYS').split(',')].map((x) => x.trim()).filter(Boolean);
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 4, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 6), modelesImage: m.image.slice(0, 3) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 5, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -278,7 +283,9 @@ export default async function handler(req) {
   };
 
   const models = await resolveModels(apiKey);
-  const candidates = (isImage ? models.image : models.text).slice(0, 5);
+  const allCandidates = (isImage ? models.image : models.text).slice(0, 8);
+  const freshCandidates = allCandidates.filter((m) => !isBad(m));
+  const candidates = freshCandidates.length ? freshCandidates : allCandidates;
   if (!candidates.length) return jsonError(503, 'Aucun modèle Gemini disponible pour cette clé.', origin);
 
   /*
@@ -304,9 +311,14 @@ export default async function handler(req) {
         for (const m of candidates) {
           try {
             let r = await callOnce(apiKeys[k], m, wantWeb);
+            let preMsg = '';
             if (!r.ok && wantWeb && (r.status === 400 || r.status === 429 || r.status === 504)) {
-              await readErr(r);
-              r = await callOnce(apiKeys[k], m, false); // recherche Google indisponible ou trop lente : on répond sans
+              preMsg = await readErr(r);
+              // Pas de nouvel essai si le modèle n'a aucun quota ou est retiré : on passe directement au suivant
+              if (!/limit:\s*0\b|no longer available|not found|not supported/i.test(preMsg)) {
+                r = await callOnce(apiKeys[k], m, false); // recherche Google indisponible ou trop lente : on répond sans
+                preMsg = '';
+              }
             }
             if (r.ok) {
               res = r;
@@ -314,11 +326,25 @@ export default async function handler(req) {
               break outer;
             }
             lastStatus = r.status;
-            lastMsg = (await readErr(r)) || `HTTP ${r.status}`;
-            tried.push(`clé ${k + 1} · ${m} → ${r.status}`);
-            if (r.status === 400) break outer; // la requête elle-même est refusée
+            lastMsg = preMsg || (await readErr(r)) || `HTTP ${r.status}`;
+            const unavailable = r.status === 404 || (r.status === 400 && /no longer available|not found|not supported|deprecated|is not available|unsupported model/i.test(lastMsg));
+            let reason = `erreur ${r.status}`;
+            if (unavailable) {
+              reason = 'retiré / indisponible';
+              markBad(m, 6 * 3600 * 1000);
+            } else if (r.status === 429) {
+              const zero = /limit:\s*0\b/.test(lastMsg);
+              reason = zero ? 'pas de quota gratuit' : 'quota épuisé';
+              markBad(m, zero ? 3600 * 1000 : 60 * 1000);
+            } else if (r.status === 504) {
+              reason = 'trop lent';
+              markBad(m, 10 * 60 * 1000);
+            }
+            else if (r.status === 401 || r.status === 403) reason = 'clé refusée';
+            tried.push({ key: k + 1, model: m, status: r.status, reason });
+            if (r.status === 400 && !unavailable) break outer; // la requête elle-même est refusée
             if (r.status === 401 || r.status === 403) break; // clé invalide : clé suivante
-            // 404 (modèle retiré), 429 (quota), 5xx/504 (lent ou en panne) : modèle suivant
+            // modèle retiré, quota, lenteur, panne : modèle suivant
           } catch (e) {
             lastMsg = e.message || lastMsg;
           }
@@ -326,11 +352,16 @@ export default async function handler(req) {
       }
 
       if (!res) {
-        console.error('[BOUA Cloud] Échec Gemini :', tried.join(' | '), '—', lastMsg);
-        let message = `Erreur Gemini : ${lastMsg}`;
-        if (lastStatus === 429) message = `Quota Gemini gratuit atteint sur toutes les clés et tous les modèles essayés (${tried.length} essais). Réessayez dans une minute. Détail Google : ${lastMsg}`;
-        else if (lastStatus === 401 || lastStatus === 403) message = `Clé Gemini refusée par Google (vérifiez GEMINI_API_KEY dans Vercel). Détail : ${lastMsg}`;
-        else if (lastStatus === 504) message = 'Gemini a mis trop de temps à répondre. Réessayez (ou désactivez la Recherche Web pour une réponse plus rapide).';
+        const summary = tried.map((t) => `${t.model}${apiKeys.length > 1 ? ` (clé ${t.key})` : ''} → ${t.reason}`).join(' • ');
+        console.error('[BOUA Cloud] Échec Gemini :', summary, '—', lastMsg);
+        let message = `Aucun modèle Gemini n'a pu répondre. ${summary ? 'Détail : ' + summary + '. ' : ''}Dernier message de Google : ${lastMsg}`;
+        if (tried.length && tried.every((t) => t.status === 429)) {
+          message = `Quota Gemini gratuit épuisé pour le moment (${summary}). Réessayez dans une minute, ou ajoutez une 2e clé (GEMINI_API_KEY_2) créée dans un autre projet Google.`;
+        } else if (tried.some((t) => t.status === 401 || t.status === 403) && !tried.some((t) => t.status === 429)) {
+          message = `Clé Gemini refusée par Google : vérifiez GEMINI_API_KEY dans Vercel. Détail : ${lastMsg}`;
+        } else if (tried.length && tried.every((t) => t.status === 504)) {
+          message = 'Gemini a mis trop de temps à répondre. Réessayez, ou désactivez la Recherche Web pour une réponse plus rapide.';
+        }
         await send(`data: ${JSON.stringify({ error: { message, status: lastStatus } })}\n\n`);
         return;
       }
