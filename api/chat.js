@@ -197,7 +197,7 @@ export default async function handler(req) {
     // Diagnostic sans secret : https://boua-ia.vercel.app/api/chat
     const keys = [env('GEMINI_API_KEY'), env('GEMINI_API_KEY_2'), env('GEMINI_API_KEY_3'), ...env('GEMINI_API_KEYS').split(',')].map((x) => x.trim()).filter(Boolean);
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 3, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 6), modelesImage: m.image.slice(0, 3) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 4, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 6), modelesImage: m.image.slice(0, 3) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -247,7 +247,8 @@ export default async function handler(req) {
 
   // 3. Appel Gemini : pour chaque clé, essaie les modèles dans l'ordre jusqu'à obtenir une réponse
   const wantWeb = Boolean(body.web || body.webSearch || body.search || body.googleSearch) && !isImage;
-  const callOnce = (key, model, withWeb) => {
+  const ATTEMPT_TIMEOUT_MS = 20000; // délai max d'attente d'un modèle avant de passer au suivant
+  const callOnce = async (key, model, withWeb) => {
     const payload = { contents };
     if (system && !isImage) payload.systemInstruction = { parts: [{ text: system }] };
     payload.generationConfig = isImage
@@ -255,8 +256,17 @@ export default async function handler(req) {
       : { temperature };
     if (withWeb) payload.tools = [{ google_search: {} }];
     const url = isImage ? `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent` : `${GEMINI_BASE}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
-    // SÉCURITÉ : la clé part dans un en-tête, jamais dans l'URL
-    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(payload) });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), isImage ? 90000 : ATTEMPT_TIMEOUT_MS);
+    try {
+      // SÉCURITÉ : la clé part dans un en-tête, jamais dans l'URL
+      return await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(payload), signal: ctrl.signal });
+    } catch (e) {
+      if (e.name === 'AbortError') return new Response(JSON.stringify({ error: { message: `${model} trop lent (délai dépassé)` } }), { status: 504 });
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
   };
   const readErr = async (r) => {
     try {
@@ -268,58 +278,93 @@ export default async function handler(req) {
   };
 
   const models = await resolveModels(apiKey);
-  const candidates = (isImage ? models.image : models.text).slice(0, 6);
+  const candidates = (isImage ? models.image : models.text).slice(0, 5);
   if (!candidates.length) return jsonError(503, 'Aucun modèle Gemini disponible pour cette clé.', origin);
 
-  let res = null;
-  let model = '';
-  const tried = [];
-  let lastStatus = 502;
-  let lastMsg = 'Impossible de joindre Gemini.';
-  outer: for (let k = 0; k < apiKeys.length; k++) {
-    for (const m of candidates) {
-      try {
-        let r = await callOnce(apiKeys[k], m, wantWeb);
-        if (!r.ok && wantWeb && (r.status === 400 || r.status === 429)) {
-          await readErr(r);
-          r = await callOnce(apiKeys[k], m, false); // recherche Google indisponible : on répond sans
-        }
-        if (r.ok) {
-          res = r;
-          model = m;
-          break outer;
-        }
-        lastStatus = r.status;
-        lastMsg = (await readErr(r)) || `HTTP ${r.status}`;
-        tried.push(`clé ${k + 1} · ${m} → ${r.status}`);
-        if (r.status === 400) break outer; // la requête elle-même est refusée : inutile d'insister
-        if (r.status === 401 || r.status === 403) break; // clé invalide : clé suivante
-        // 404 (modèle retiré) ou 429 (quota de ce modèle) ou 5xx : modèle suivant
-      } catch (e) {
-        lastMsg = e.message || lastMsg;
-      }
-    }
-  }
-  if (!res) {
-    console.error('[BOUA Cloud] Échec Gemini :', tried.join(' | '), '—', lastMsg);
-    if (lastStatus === 429) {
-      return jsonError(
-        429,
-        `Quota Gemini gratuit atteint sur toutes les clés et tous les modèles essayés (${tried.length} essais). Réessayez dans une minute. Détail Google : ${lastMsg}`,
-        origin
-      );
-    }
-    if (lastStatus === 401 || lastStatus === 403) return jsonError(502, `Clé Gemini refusée par Google (vérifiez GEMINI_API_KEY dans Vercel). Détail : ${lastMsg}`, origin);
-    return jsonError(502, `Erreur Gemini : ${lastMsg}`, origin);
-  }
+  /*
+   * TEMPS RÉEL SANS ERREUR 504 : la réponse au navigateur s'ouvre IMMÉDIATEMENT (Vercel exige un début
+   * de réponse en moins de 25 s). Les essais de modèles se font ensuite dans le flux, avec un signal
+   * de vie toutes les 8 s. Une erreur finale est envoyée comme événement : data: {"error":{...}}
+   */
+  const { readable, writable } = new TransformStream();
+  const writer = writable.getWriter();
+  const enc = new TextEncoder();
+  const send = (str) => writer.write(enc.encode(str)).catch(() => {});
 
-  const headers = {
-    ...corsHeaders(origin),
-    'Cache-Control': 'no-store',
-    'X-BOUA-Model': model,
-    'X-Content-Type-Options': 'nosniff',
-  };
-  if (isImage) return new Response(res.body, { status: 200, headers: { ...headers, 'Content-Type': 'application/json' } });
-  // Flux en temps réel transmis tel quel au navigateur
-  return new Response(res.body, { status: 200, headers: { ...headers, 'Content-Type': 'text/event-stream; charset=utf-8' } });
+  (async () => {
+    const ping = setInterval(() => send(': ping\n\n'), 8000);
+    await send(': ouverture BOUA Cloud\n\n');
+    let res = null;
+    let model = '';
+    const tried = [];
+    let lastStatus = 502;
+    let lastMsg = 'Impossible de joindre Gemini.';
+    try {
+      outer: for (let k = 0; k < apiKeys.length; k++) {
+        for (const m of candidates) {
+          try {
+            let r = await callOnce(apiKeys[k], m, wantWeb);
+            if (!r.ok && wantWeb && (r.status === 400 || r.status === 429 || r.status === 504)) {
+              await readErr(r);
+              r = await callOnce(apiKeys[k], m, false); // recherche Google indisponible ou trop lente : on répond sans
+            }
+            if (r.ok) {
+              res = r;
+              model = m;
+              break outer;
+            }
+            lastStatus = r.status;
+            lastMsg = (await readErr(r)) || `HTTP ${r.status}`;
+            tried.push(`clé ${k + 1} · ${m} → ${r.status}`);
+            if (r.status === 400) break outer; // la requête elle-même est refusée
+            if (r.status === 401 || r.status === 403) break; // clé invalide : clé suivante
+            // 404 (modèle retiré), 429 (quota), 5xx/504 (lent ou en panne) : modèle suivant
+          } catch (e) {
+            lastMsg = e.message || lastMsg;
+          }
+        }
+      }
+
+      if (!res) {
+        console.error('[BOUA Cloud] Échec Gemini :', tried.join(' | '), '—', lastMsg);
+        let message = `Erreur Gemini : ${lastMsg}`;
+        if (lastStatus === 429) message = `Quota Gemini gratuit atteint sur toutes les clés et tous les modèles essayés (${tried.length} essais). Réessayez dans une minute. Détail Google : ${lastMsg}`;
+        else if (lastStatus === 401 || lastStatus === 403) message = `Clé Gemini refusée par Google (vérifiez GEMINI_API_KEY dans Vercel). Détail : ${lastMsg}`;
+        else if (lastStatus === 504) message = 'Gemini a mis trop de temps à répondre. Réessayez (ou désactivez la Recherche Web pour une réponse plus rapide).';
+        await send(`data: ${JSON.stringify({ error: { message, status: lastStatus } })}\n\n`);
+        return;
+      }
+
+      await send(`: modele ${model}\n\n`);
+      if (isImage) {
+        // Image : réponse complète envoyée en un seul événement
+        const data = await res.text();
+        await send(`data: ${data.replace(/\n/g, ' ')}\n\n`);
+        return;
+      }
+      // Texte : relais direct du flux Gemini, morceau par morceau
+      const reader = res.body.getReader();
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        await writer.write(value).catch(() => {});
+      }
+    } catch (e) {
+      await send(`data: ${JSON.stringify({ error: { message: e.message || 'Erreur BOUA Cloud' } })}\n\n`);
+    } finally {
+      clearInterval(ping);
+      writer.close().catch(() => {});
+    }
+  })();
+
+  return new Response(readable, {
+    status: 200,
+    headers: {
+      ...corsHeaders(origin),
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-store, no-transform',
+      'X-Content-Type-Options': 'nosniff',
+      'X-Accel-Buffering': 'no',
+    },
+  });
 }
