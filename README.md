@@ -33,18 +33,18 @@ boua-ai/
 Sécurité : la clé Gemini reste sur le serveur (jamais dans le site). Seuls les utilisateurs connectés
 peuvent utiliser BOUA Cloud (jeton Firebase vérifié), avec une limite de 20 messages par minute.
 Le meilleur modèle Gemini « Flash » est choisi automatiquement (variable `GEMINI_MODEL` pour en forcer un).
-Si votre adresse Vercel n'est pas `boua-ai.vercel.app`, modifiez `BOUA_CLOUD_PUBLIC_URL` dans `index.html`
+Si votre adresse Vercel n'est pas `boua-ia.vercel.app`, modifiez `BOUA_CLOUD_PUBLIC_URL` dans `index.html`
 (utilisée par l'application Android).
 
 ## 2. Firebase — à faire UNE fois dans console.firebase.google.com (projet boui-ia)
 1. **Authentication → Sign-in method** : activez **E-mail/Mot de passe** et **Google**.
 2. **Authentication → Settings → Authorized domains** : ajoutez votre domaine Vercel
-   (ex. `boua-ai.vercel.app`) et votre domaine personnalisé s'il existe. Sans ça, Google refuse la connexion.
+   (ex. `boua-ia.vercel.app`) et votre domaine personnalisé s'il existe. Sans ça, Google refuse la connexion.
 3. **Firestore Database → Créer une base de données** (mode production, région `eur3` Europe).
 4. **Firestore → Règles** : remplacez tout par le contenu de `firestore.rules`, puis **Publier**.
    ⚠️ Étape indispensable : ce sont ces règles qui empêchent un utilisateur de lire les données d'un autre.
 5. (Recommandé) Google Cloud Console → **API et services → Identifiants** → clé « Browser key » :
-   restreignez-la aux sites `https://boua-ai.vercel.app/*` et `https://appassets.androidplatform.net/*`
+   restreignez-la aux sites `https://boua-ia.vercel.app/*` et `https://appassets.androidplatform.net/*`
    (le second est nécessaire pour l'application Android).
 
 Ce qui est synchronisé : discussions, mémoire, agents, préférences.
