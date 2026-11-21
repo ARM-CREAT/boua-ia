@@ -1,0 +1,4 @@
+android/
+firestore.rules
+firebase.json
+.firebaserc

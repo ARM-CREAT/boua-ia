@@ -1,0 +1,46 @@
+rules_version = '2';
+
+// BOUA AI — Règles de sécurité Firestore (projet boui-ia)
+// Principe : chaque utilisateur connecté ne peut lire et écrire QUE ses propres données.
+// Tout le reste est refusé.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isOwner(uid) {
+      return request.auth != null && request.auth.uid == uid;
+    }
+
+    match /users/{uid} {
+      allow read, delete: if isOwner(uid);
+      allow create, update: if isOwner(uid) && request.resource.data.size() <= 20;
+
+      // Discussions
+      match /chats/{chatId} {
+        allow read, delete: if isOwner(uid);
+        allow create, update: if isOwner(uid)
+          && chatId.size() <= 80
+          && request.resource.data.keys().hasOnly(['v', 'title', 'updatedAt', 'messages'])
+          && request.resource.data.title is string
+          && request.resource.data.title.size() <= 200
+          && request.resource.data.updatedAt is number
+          && request.resource.data.messages is list
+          && request.resource.data.messages.size() <= 500;
+      }
+
+      // Cerveau : mémoire, agents, préférences (un seul document « state »)
+      match /brain/{docId} {
+        allow read, delete: if isOwner(uid) && docId == 'state';
+        allow create, update: if isOwner(uid)
+          && docId == 'state'
+          && request.resource.data.keys().hasOnly(['v', 'updatedAt', 'memory', 'agents', 'activeAgentId', 'prefs'])
+          && request.resource.data.agents is list
+          && request.resource.data.agents.size() <= 50;
+      }
+    }
+
+    // Tout autre chemin : interdit
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

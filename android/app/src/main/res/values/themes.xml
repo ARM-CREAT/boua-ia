@@ -1,0 +1,8 @@
+<resources>
+    <style name="Theme.BouaAI" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/boua_bg</item>
+        <item name="android:statusBarColor">@color/boua_bg</item>
+        <item name="android:navigationBarColor">@color/boua_bg</item>
+        <item name="android:colorAccent">@color/boua_green</item>
+    </style>
+</resources>
