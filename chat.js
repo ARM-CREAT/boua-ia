@@ -129,36 +129,47 @@ function rateLimited(uid) {
 }
 
 /* ---------------- Choix automatique du modèle Gemini ---------------- */
-let modelCache = { text: '', image: '', exp: 0 };
+let modelCache = { text: [], image: [], exp: 0 };
 
 function versionOf(name) {
   const m = name.match(/gemini-(\d+(?:\.\d+)?)/);
   return m ? parseFloat(m[1]) : 0;
 }
 
+/**
+ * Liste ordonnée des modèles à essayer :
+ * 1) Flash stables (du plus récent au plus ancien) → 2) Flash-Lite stables (quotas gratuits plus larges)
+ * 3) alias « latest » → 4) versions « preview » (souvent quota gratuit nul)
+ */
 export function pickModels(models) {
   const gen = models.filter((m) => (m.supportedGenerationMethods || []).includes('generateContent')).map((m) => m.name.replace(/^models\//, ''));
-  const notSpecial = (n) => !/(image|tts|audio|live|embedding|vision|thinking|robotics|computer|exp|-\d{3,}$)/.test(n);
-  const score = (n) => versionOf(n) * 10 + (/-preview/.test(n) ? -1 : 0) + (/lite/.test(n) ? -3 : 0);
-  const textCandidates = gen.filter((n) => /^gemini-[\d.]+-flash/.test(n) && notSpecial(n)).sort((a, b) => score(b) - score(a));
-  const imageCandidates = gen.filter((n) => /^gemini-[\d.]+-flash.*image/.test(n) && !/tts|audio|live/.test(n)).sort((a, b) => versionOf(b) - versionOf(a));
-  return { text: textCandidates[0] || '', image: imageCandidates[0] || '' };
+  const notSpecial = (n) => !/(image|tts|audio|live|embedding|vision|thinking|robotics|computer|exp|customtools|-\d{3,}$)/.test(n);
+  const flash = gen.filter((n) => /^gemini-[\d.]+-flash/.test(n) && notSpecial(n));
+  const byVersion = (a, b) => versionOf(b) - versionOf(a);
+  const stable = flash.filter((n) => !/preview/.test(n));
+  const text = [
+    ...stable.filter((n) => !/lite/.test(n)).sort(byVersion),
+    ...stable.filter((n) => /lite/.test(n)).sort(byVersion),
+    ...gen.filter((n) => /^gemini-flash(-lite)?-latest$/.test(n)),
+    ...flash.filter((n) => /preview/.test(n)).sort(byVersion),
+  ];
+  const images = gen.filter((n) => /^gemini-[\d.]+-flash.*image/.test(n) && !/tts|audio|live/.test(n));
+  const imageList = [...images.filter((n) => !/preview/.test(n)).sort(byVersion), ...images.filter((n) => /preview/.test(n)).sort(byVersion)];
+  return { text: [...new Set(text)], image: imageList };
 }
 
 async function resolveModels(apiKey, force = false) {
-  const forcedText = env('GEMINI_MODEL');
-  const forcedImage = env('GEMINI_IMAGE_MODEL');
-  if (!force && modelCache.text && Date.now() < modelCache.exp) return modelCache;
-  let picked = { text: '', image: '' };
+  if (!force && modelCache.text.length && Date.now() < modelCache.exp) return modelCache;
+  let picked = { text: [], image: [] };
   try {
     const res = await fetch(`${GEMINI_BASE}/models?pageSize=1000`, { headers: { 'x-goog-api-key': apiKey } });
     if (res.ok) picked = pickModels((await res.json()).models || []);
   } catch (e) {}
-  modelCache = {
-    text: forcedText || picked.text || 'gemini-flash-latest',
-    image: forcedImage || picked.image || '',
-    exp: Date.now() + 6 * 3600 * 1000,
-  };
+  const forcedText = env('GEMINI_MODEL');
+  const forcedImage = env('GEMINI_IMAGE_MODEL');
+  const text = [...new Set([forcedText, ...picked.text, 'gemini-flash-latest', 'gemini-flash-lite-latest'].filter(Boolean))];
+  const image = [...new Set([forcedImage, ...picked.image].filter(Boolean))];
+  modelCache = { text, image, exp: Date.now() + 6 * 3600 * 1000 };
   return modelCache;
 }
 
@@ -182,6 +193,14 @@ function sanitizeContents(contents) {
 export default async function handler(req) {
   const origin = allowedOrigin(req);
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders(origin) });
+  if (req.method === 'GET') {
+    // Diagnostic sans secret : https://boua-ia.vercel.app/api/chat
+    const keys = [env('GEMINI_API_KEY'), env('GEMINI_API_KEY_2'), env('GEMINI_API_KEY_3'), ...env('GEMINI_API_KEYS').split(',')].map((x) => x.trim()).filter(Boolean);
+    const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 3, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 6), modelesImage: m.image.slice(0, 3) }, null, 2), {
+      headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
+    });
+  }
   if (req.method !== 'POST') return jsonError(405, 'Méthode non autorisée', origin);
   if (req.headers.get('origin') && !origin) return jsonError(403, 'Origine non autorisée', '');
 
@@ -226,12 +245,9 @@ export default async function handler(req) {
   const system = typeof body.systemInstruction === 'string' ? body.systemInstruction.slice(0, 60000) : '';
   const temperature = Math.min(1.2, Math.max(0, Number(body.temperature) || 0.5));
 
-  // 3. Appel Gemini : rotation des clés, nouvel essai sans recherche web si besoin, modèle retiré → nouveau choix
+  // 3. Appel Gemini : pour chaque clé, essaie les modèles dans l'ordre jusqu'à obtenir une réponse
   const wantWeb = Boolean(body.web || body.webSearch || body.search || body.googleSearch) && !isImage;
-  const call = async (key, force, withWeb) => {
-    const models = await resolveModels(apiKey, force);
-    const model = isImage ? models.image : models.text;
-    if (!model) throw Object.assign(new Error('Aucun modèle disponible'), { status: 503 });
+  const callOnce = (key, model, withWeb) => {
     const payload = { contents };
     if (system && !isImage) payload.systemInstruction = { parts: [{ text: system }] };
     payload.generationConfig = isImage
@@ -239,35 +255,62 @@ export default async function handler(req) {
       : { temperature };
     if (withWeb) payload.tools = [{ google_search: {} }];
     const url = isImage ? `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent` : `${GEMINI_BASE}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
-    // SÉCURITÉ : la clé part dans un en-tête, jamais dans l'URL (pas de fuite dans les journaux)
-    return { res: await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(payload) }), model };
+    // SÉCURITÉ : la clé part dans un en-tête, jamais dans l'URL
+    return fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(payload) });
   };
+  const readErr = async (r) => {
+    try {
+      const j = await r.json();
+      return String(j?.error?.message || '').slice(0, 400);
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const models = await resolveModels(apiKey);
+  const candidates = (isImage ? models.image : models.text).slice(0, 6);
+  if (!candidates.length) return jsonError(503, 'Aucun modèle Gemini disponible pour cette clé.', origin);
 
   let res = null;
   let model = '';
+  const tried = [];
   let lastStatus = 502;
   let lastMsg = 'Impossible de joindre Gemini.';
-  for (const key of apiKeys) {
-    try {
-      ({ res, model } = await call(key, false, wantWeb));
-      if (res.status === 404) ({ res, model } = await call(key, true, wantWeb)); // modèle retiré par Google
-      if (!res.ok && wantWeb && (res.status === 400 || res.status === 429)) ({ res, model } = await call(key, false, false)); // recherche web indisponible
-      if (res.ok) break;
-      lastStatus = res.status;
+  outer: for (let k = 0; k < apiKeys.length; k++) {
+    for (const m of candidates) {
       try {
-        const j = await res.json();
-        if (j?.error?.message) lastMsg = j.error.message.slice(0, 300);
-      } catch (e) {}
-      res = null;
-      if (![429, 403, 500, 503].includes(lastStatus)) break; // erreur de la requête elle-même : inutile d'essayer une autre clé
-    } catch (e) {
-      lastMsg = e.message || lastMsg;
-      res = null;
+        let r = await callOnce(apiKeys[k], m, wantWeb);
+        if (!r.ok && wantWeb && (r.status === 400 || r.status === 429)) {
+          await readErr(r);
+          r = await callOnce(apiKeys[k], m, false); // recherche Google indisponible : on répond sans
+        }
+        if (r.ok) {
+          res = r;
+          model = m;
+          break outer;
+        }
+        lastStatus = r.status;
+        lastMsg = (await readErr(r)) || `HTTP ${r.status}`;
+        tried.push(`clé ${k + 1} · ${m} → ${r.status}`);
+        if (r.status === 400) break outer; // la requête elle-même est refusée : inutile d'insister
+        if (r.status === 401 || r.status === 403) break; // clé invalide : clé suivante
+        // 404 (modèle retiré) ou 429 (quota de ce modèle) ou 5xx : modèle suivant
+      } catch (e) {
+        lastMsg = e.message || lastMsg;
+      }
     }
   }
   if (!res) {
-    if (lastStatus === 429) return jsonError(429, 'Quota Gemini atteint sur toutes les clés pour le moment. Réessayez dans une minute.', origin);
-    return jsonError(lastStatus >= 400 && lastStatus < 600 ? (lastStatus === 400 ? 400 : 502) : 502, `Erreur Gemini : ${lastMsg}`, origin);
+    console.error('[BOUA Cloud] Échec Gemini :', tried.join(' | '), '—', lastMsg);
+    if (lastStatus === 429) {
+      return jsonError(
+        429,
+        `Quota Gemini gratuit atteint sur toutes les clés et tous les modèles essayés (${tried.length} essais). Réessayez dans une minute. Détail Google : ${lastMsg}`,
+        origin
+      );
+    }
+    if (lastStatus === 401 || lastStatus === 403) return jsonError(502, `Clé Gemini refusée par Google (vérifiez GEMINI_API_KEY dans Vercel). Détail : ${lastMsg}`, origin);
+    return jsonError(502, `Erreur Gemini : ${lastMsg}`, origin);
   }
 
   const headers = {
