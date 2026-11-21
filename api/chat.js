@@ -202,7 +202,7 @@ export default async function handler(req) {
     // Diagnostic sans secret : https://boua-ia.vercel.app/api/chat
     const keys = [env('GEMINI_API_KEY'), env('GEMINI_API_KEY_2'), env('GEMINI_API_KEY_3'), ...env('GEMINI_API_KEYS').split(',')].map((x) => x.trim()).filter(Boolean);
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 5, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 6, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -303,6 +303,7 @@ export default async function handler(req) {
     await send(': ouverture BOUA Cloud\n\n');
     let res = null;
     let model = '';
+    let webUsed = false;
     const tried = [];
     let lastStatus = 502;
     let lastMsg = 'Impossible de joindre Gemini.';
@@ -317,12 +318,14 @@ export default async function handler(req) {
               // Pas de nouvel essai si le modèle n'a aucun quota ou est retiré : on passe directement au suivant
               if (!/limit:\s*0\b|no longer available|not found|not supported/i.test(preMsg)) {
                 r = await callOnce(apiKeys[k], m, false); // recherche Google indisponible ou trop lente : on répond sans
+                r.__web = false;
                 preMsg = '';
               }
             }
             if (r.ok) {
               res = r;
               model = m;
+              webUsed = wantWeb && !preMsg && r.__web !== false;
               break outer;
             }
             lastStatus = r.status;
@@ -367,6 +370,8 @@ export default async function handler(req) {
       }
 
       await send(`: modele ${model}\n\n`);
+      // Information pour le site : modèle utilisé et disponibilité de la recherche Google
+      await send(`data: ${JSON.stringify({ boua: { model, webAvailable: webUsed } })}\n\n`);
       if (isImage) {
         // Image : réponse complète envoyée en un seul événement
         const data = await res.text();
