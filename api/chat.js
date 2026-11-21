@@ -178,6 +178,66 @@ async function resolveModels(apiKey, force = false) {
   return modelCache;
 }
 
+/* ---------------- Recherche web propre à BOUA Cloud (Google Actualités, gratuit, sans clé) ---------------- */
+const NEWS_LOCALES = { fr: ['fr', 'FR'], es: ['es', 'ES'], en: ['en', 'US'], ar: ['ar', 'EG'] };
+
+function decodeXml(str) {
+  return String(str || '')
+    .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .trim();
+}
+
+export function parseNewsRss(xml, max = 8) {
+  const items = [];
+  const re = /<item>([\s\S]*?)<\/item>/g;
+  let m;
+  while ((m = re.exec(xml)) && items.length < max) {
+    const block = m[1];
+    const pick = (tag) => decodeXml((block.match(new RegExp(`<${tag}[^>]*>([\\s\\S]*?)<\\/${tag}>`)) || [])[1]);
+    const link = pick('link');
+    if (!/^https?:\/\//.test(link)) continue;
+    const date = new Date(pick('pubDate'));
+    items.push({
+      title: pick('title').slice(0, 300),
+      uri: link.slice(0, 2000),
+      source: pick('source').slice(0, 120),
+      date: isNaN(date) ? '' : date.toISOString().slice(0, 10),
+    });
+  }
+  return items;
+}
+
+async function searchNews(query, lang) {
+  const [hl, gl] = NEWS_LOCALES[lang] || NEWS_LOCALES.fr;
+  // Mots-clés uniquement : « Quand sont les élections générales en Espagne ? » → « élections générales Espagne »
+  const STOP = /^(quand|quel|quelle|quels|quelles|qui|que|quoi|comment|pourquoi|où|est|sont|ce|c|qu|les|le|la|l|des|de|du|d|un|une|en|à|au|aux|et|ou|pour|sur|dans|me|moi|dis|donne|peux|tu|vous|est-ce|cuándo|cuando|qué|que|quién|cómo|dónde|son|es|el|los|las|del|de|y|en|para|por|me|dime|when|what|who|how|where|is|are|the|of|in|on|for|and|tell|me|a|an)$/i;
+  const words = String(query || '')
+    .replace(/[?!¿¡.,;:«»"()]/g, ' ')
+    .split(/\s+/)
+    .filter((w) => w && !STOP.test(w));
+  const q = (words.length >= 2 ? words.join(' ') : String(query || '')).replace(/\s+/g, ' ').trim().slice(0, 200);
+  if (!q) return [];
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), 6000);
+  try {
+    const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=${hl}&gl=${gl}&ceid=${gl}:${hl}`;
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (BOUA Cloud)' }, signal: ctrl.signal });
+    if (!res.ok) return [];
+    return parseNewsRss(await res.text());
+  } catch (e) {
+    return [];
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /* ---------------- Validation de la requête ---------------- */
 function sanitizeContents(contents) {
   if (!Array.isArray(contents) || contents.length === 0 || contents.length > MAX_CONTENTS) throw new Error('Conversation invalide');
@@ -202,7 +262,7 @@ export default async function handler(req) {
     // Diagnostic sans secret : https://boua-ia.vercel.app/api/chat
     const keys = [env('GEMINI_API_KEY'), env('GEMINI_API_KEY_2'), env('GEMINI_API_KEY_3'), ...env('GEMINI_API_KEYS').split(',')].map((x) => x.trim()).filter(Boolean);
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 6, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 7, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -281,6 +341,21 @@ export default async function handler(req) {
       return '';
     }
   };
+
+  // Recherche web BOUA (indépendante de Gemini) pour les questions d'actualité
+  let webResults = [];
+  if (!isImage && (body.mustSearch || (wantWeb && body.alwaysSearch))) {
+    const lastUser = [...contents].reverse().find((c) => c.role === 'user');
+    const userText = String(body.query || lastUser?.parts?.map((p) => p.text || '').join(' ') || '');
+    webResults = await searchNews(userText, String(body.lang || 'fr'));
+    if (webResults.length && lastUser) {
+      const today = new Date().toISOString().slice(0, 10);
+      const block =
+        `\n\n[RÉSULTATS DE RECHERCHE WEB RÉELS — Google Actualités, consultés le ${today}. Ces informations sont plus récentes et plus fiables que tes connaissances internes : base ta réponse dessus, cite les sources par leur nom et indique les dates.]\n` +
+        webResults.map((r, i) => `${i + 1}. ${r.title}${r.source ? ` — ${r.source}` : ''}${r.date ? ` (${r.date})` : ''}`).join('\n');
+      lastUser.parts = [...lastUser.parts, { text: block }];
+    }
+  }
 
   const models = await resolveModels(apiKey);
   const allCandidates = (isImage ? models.image : models.text).slice(0, 8);
@@ -371,7 +446,16 @@ export default async function handler(req) {
 
       await send(`: modele ${model}\n\n`);
       // Information pour le site : modèle utilisé et disponibilité de la recherche Google
-      await send(`data: ${JSON.stringify({ boua: { model, webAvailable: webUsed } })}\n\n`);
+      await send(
+        `data: ${JSON.stringify({
+          boua: {
+            model,
+            webAvailable: webUsed || webResults.length > 0,
+            searched: webResults.length > 0,
+            sources: webResults.map((r) => ({ uri: r.uri, title: `${r.title}${r.source ? ' — ' + r.source : ''}${r.date ? ' (' + r.date + ')' : ''}` })),
+          },
+        })}\n\n`
+      );
       if (isImage) {
         // Image : réponse complète envoyée en un seul événement
         const data = await res.text();
