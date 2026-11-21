@@ -3440,10 +3440,14 @@ contenu complet du document
         signal
       );
       let text = '';
+      let streamError = '';
       const sources = [];
       const seen = new Set();
       await readEventStream(res, (json) => {
-        if (json?.error) throw new Error(json.error.message || 'Erreur Gemini');
+        if (json?.error) {
+          streamError = json.error.message || 'Erreur Gemini';
+          return;
+        }
         const cand = json?.candidates?.[0];
         const piece = cand?.content?.parts?.map((p) => (p.thought ? '' : p.text || '')).join('') || '';
         if (piece) {
@@ -3458,7 +3462,7 @@ contenu complet du document
           }
         }
       });
-      if (!text) throw new Error('Réponse vide de BOUA Cloud.');
+      if (!text) throw new Error(streamError || 'Réponse vide de BOUA Cloud.');
       return { rawText: text, sources };
     }
 
@@ -3537,7 +3541,13 @@ contenu complet du document
       if (isProviderConfigured('boua')) {
         try {
           const res = await bouaCloudFetch({ mode: 'image', aspectRatio, contents: [{ role: 'user', parts: [{ text: fullPrompt }] }] }, signal);
-          const data = await res.json();
+          let data = null;
+          let imgError = '';
+          await readEventStream(res, (json) => {
+            if (json?.error) imgError = json.error.message || 'Erreur image';
+            else data = json;
+          });
+          if (!data && imgError) throw new Error(imgError);
           const imgPart = data?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
           if (imgPart?.inlineData?.data && /^image\//.test(imgPart.inlineData.mimeType || 'image/png')) {
             return `data:${imgPart.inlineData.mimeType || 'image/png'};base64,${imgPart.inlineData.data}`;
