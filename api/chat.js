@@ -97,7 +97,6 @@ export async function verifyFirebaseIdToken(token, projectId = PROJECT_ID, nowSe
   if (!payload.sub || typeof payload.sub !== 'string' || payload.sub.length > 128) throw new Error('Utilisateur invalide');
   if (!(payload.exp > nowSec)) throw new Error('Session expirée, reconnectez-vous');
   if (!(payload.iat <= nowSec + 300)) throw new Error('Jeton invalide');
-  if (payload.firebase?.sign_in_provider === 'anonymous') throw new Error('Connexion avec un compte requise');
 
   const keys = jwksOverride || (await getJwks());
   const jwk = keys.find((k) => k.kid === header.kid);
@@ -115,10 +114,10 @@ export async function verifyFirebaseIdToken(token, projectId = PROJECT_ID, nowSe
 
 /* ---------------- Limite de débit (par instance) ---------------- */
 const hits = new Map();
-function rateLimited(uid) {
+function rateLimited(uid, max = RATE_LIMIT_PER_MIN) {
   const now = Date.now();
   const arr = (hits.get(uid) || []).filter((t) => now - t < 60000);
-  if (arr.length >= RATE_LIMIT_PER_MIN) {
+  if (arr.length >= max) {
     hits.set(uid, arr);
     return true;
   }
@@ -262,7 +261,7 @@ export default async function handler(req) {
     // Diagnostic sans secret : https://boua-ia.vercel.app/api/chat
     const keys = [env('GEMINI_API_KEY'), env('GEMINI_API_KEY_2'), env('GEMINI_API_KEY_3'), ...env('GEMINI_API_KEYS').split(',')].map((x) => x.trim()).filter(Boolean);
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 7, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 8, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -286,7 +285,15 @@ export default async function handler(req) {
   } catch (e) {
     return jsonError(401, e.message || 'Session invalide', origin);
   }
-  if (rateLimited(user.sub)) return jsonError(429, 'Trop de messages en une minute. Patientez quelques secondes.', origin);
+  const isGuest = user.firebase?.sign_in_provider === 'anonymous';
+  const ip = (req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || '').split(',')[0].trim();
+  if (rateLimited(user.sub, isGuest ? 10 : RATE_LIMIT_PER_MIN) || (ip && rateLimited('ip:' + ip, 40))) {
+    return jsonError(
+      429,
+      isGuest ? 'Limite invité atteinte (10 messages par minute). Créez un compte gratuit pour 20 messages par minute.' : 'Trop de messages en une minute. Patientez quelques secondes.',
+      origin
+    );
+  }
 
   // 2. Lecture et validation
   const len = Number(req.headers.get('content-length') || 0);
@@ -318,7 +325,7 @@ export default async function handler(req) {
     if (system && !isImage) payload.systemInstruction = { parts: [{ text: system }] };
     payload.generationConfig = isImage
       ? { responseModalities: ['TEXT', 'IMAGE'], ...(body.aspectRatio ? { imageConfig: { aspectRatio: String(body.aspectRatio).slice(0, 8) } } : {}) }
-      : { temperature };
+      : { temperature, maxOutputTokens: Math.min(65536, Math.max(1024, Number(body.maxTokens) || 16384)) };
     if (withWeb) payload.tools = [{ google_search: {} }];
     const url = isImage ? `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent` : `${GEMINI_BASE}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
     const ctrl = new AbortController();
