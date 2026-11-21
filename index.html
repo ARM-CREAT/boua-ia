@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <!-- SÉCURITÉ : Politique de contenu — seuls les domaines listés peuvent charger du code ou recevoir des données -->
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com https://www.gstatic.com https://apis.google.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com; font-src 'self' data: https://fonts.gstatic.com https://cdn.jsdelivr.net; img-src 'self' data: blob: https:; media-src 'self' data: blob:; connect-src 'self' https://*.vercel.app https://*.googleapis.com https://boui-ia.firebaseapp.com https://api.openai.com https://api.anthropic.com https://api.deepseek.com https://cdn.jsdelivr.net http://localhost:11434 http://127.0.0.1:11434; worker-src 'self' blob:; frame-src 'self' blob: data: https://boui-ia.firebaseapp.com https://accounts.google.com https://apis.google.com; object-src 'none'; base-uri 'self'; form-action 'self'; manifest-src 'self' blob:" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com https://cdn.jsdelivr.net https://unpkg.com https://cdnjs.cloudflare.com https://www.gstatic.com https://apis.google.com https://esm.sh https://cdn.skypack.dev https://code.jquery.com https://ajax.googleapis.com https://cdn.plot.ly https://kit.fontawesome.com https://maps.googleapis.com https://cdn.babylonjs.com https://threejs.org; style-src 'self' 'unsafe-inline' https:; font-src 'self' data: https:; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' https: wss: http://localhost:11434 http://127.0.0.1:11434; worker-src 'self' blob:; frame-src 'self' blob: data: https:; object-src 'none'; base-uri 'self'; form-action 'self' https:; manifest-src 'self' blob:" />
   <meta name="referrer" content="strict-origin-when-cross-origin" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
   <meta name="theme-color" content="#09090b" />
@@ -24,24 +24,9 @@
   <link href="https://fonts.googleapis.com/css2?family=Cairo:wght@400;600;700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
   <!-- Styles : coloration du code & formules mathématiques (versions figées + empreinte d'intégrité SRI) -->
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.10.0/styles/github-dark.min.css" integrity="sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH" crossorigin="anonymous" referrerpolicy="no-referrer" />
-  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css" integrity="sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+" crossorigin="anonymous" referrerpolicy="no-referrer" />
 
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          fontFamily: {
-            sans: ['Inter', 'Cairo', 'system-ui', '-apple-system', 'sans-serif'],
-            mono: ['JetBrains Mono', 'monospace'],
-          },
-        },
-      },
-    };
-  </script>
+  <!-- Tailwind CSS précompilé (allègement : plus de téléchargement ni de compilation à chaque visite) -->
+  <style id="tailwind-compiled">*,:after,:before{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }::backdrop{--tw-border-spacing-x:0;--tw-border-spacing-y:0;--tw-translate-x:0;--tw-translate-y:0;--tw-rotate:0;--tw-skew-x:0;--tw-skew-y:0;--tw-scale-x:1;--tw-scale-y:1;--tw-pan-x: ;--tw-pan-y: ;--tw-pinch-zoom: ;--tw-scroll-snap-strictness:proximity;--tw-gradient-from-position: ;--tw-gradient-via-position: ;--tw-gradient-to-position: ;--tw-ordinal: ;--tw-slashed-zero: ;--tw-numeric-figure: ;--tw-numeric-spacing: ;--tw-numeric-fraction: ;--tw-ring-inset: ;--tw-ring-offset-width:0px;--tw-ring-offset-color:#fff;--tw-ring-color:rgba(59,130,246,.5);--tw-ring-offset-shadow:0 0 #0000;--tw-ring-shadow:0 0 #0000;--tw-shadow:0 0 #0000;--tw-shadow-colored:0 0 #0000;--tw-blur: ;--tw-brightness: ;--tw-contrast: ;--tw-grayscale: ;--tw-hue-rotate: ;--tw-invert: ;--tw-saturate: ;--tw-sepia: ;--tw-drop-shadow: ;--tw-backdrop-blur: ;--tw-backdrop-brightness: ;--tw-backdrop-contrast: ;--tw-backdrop-grayscale: ;--tw-backdrop-hue-rotate: ;--tw-backdrop-invert: ;--tw-backdrop-opacity: ;--tw-backdrop-saturate: ;--tw-backdrop-sepia: ;--tw-contain-size: ;--tw-contain-layout: ;--tw-contain-paint: ;--tw-contain-style: }/*! tailwindcss v3.4.17 | MIT License | https://tailwindcss.com*/*,:after,:before{box-sizing:border-box;border:0 solid #e5e7eb}:after,:before{--tw-content:""}:host,html{line-height:1.5;-webkit-text-size-adjust:100%;-moz-tab-size:4;-o-tab-size:4;tab-size:4;font-family:Inter,Cairo,system-ui,-apple-system,sans-serif;font-feature-settings:normal;font-variation-settings:normal;-webkit-tap-highlight-color:transparent}body{margin:0;line-height:inherit}hr{height:0;color:inherit;border-top-width:1px}abbr:where([title]){-webkit-text-decoration:underline dotted;text-decoration:underline dotted}h1,h2,h3,h4,h5,h6{font-size:inherit;font-weight:inherit}a{color:inherit;text-decoration:inherit}b,strong{font-weight:bolder}code,kbd,pre,samp{font-family:JetBrains Mono,monospace;font-feature-settings:normal;font-variation-settings:normal;font-size:1em}small{font-size:80%}sub,sup{font-size:75%;line-height:0;position:relative;vertical-align:baseline}sub{bottom:-.25em}sup{top:-.5em}table{text-indent:0;border-color:inherit;border-collapse:collapse}button,input,optgroup,select,textarea{font-family:inherit;font-feature-settings:inherit;font-variation-settings:inherit;font-size:100%;font-weight:inherit;line-height:inherit;letter-spacing:inherit;color:inherit;margin:0;padding:0}button,select{text-transform:none}button,input:where([type=button]),input:where([type=reset]),input:where([type=submit]){-webkit-appearance:button;background-color:transparent;background-image:none}:-moz-focusring{outline:auto}:-moz-ui-invalid{box-shadow:none}progress{vertical-align:baseline}::-webkit-inner-spin-button,::-webkit-outer-spin-button{height:auto}[type=search]{-webkit-appearance:textfield;outline-offset:-2px}::-webkit-search-decoration{-webkit-appearance:none}::-webkit-file-upload-button{-webkit-appearance:button;font:inherit}summary{display:list-item}blockquote,dd,dl,figure,h1,h2,h3,h4,h5,h6,hr,p,pre{margin:0}fieldset{margin:0}fieldset,legend{padding:0}menu,ol,ul{list-style:none;margin:0;padding:0}dialog{padding:0}textarea{resize:vertical}input::-moz-placeholder,textarea::-moz-placeholder{opacity:1;color:#9ca3af}input::placeholder,textarea::placeholder{opacity:1;color:#9ca3af}[role=button],button{cursor:pointer}:disabled{cursor:default}audio,canvas,embed,iframe,img,object,svg,video{display:block;vertical-align:middle}img,video{max-width:100%;height:auto}[hidden]:where(:not([hidden=until-found])){display:none}.container{width:100%}@media (min-width:640px){.container{max-width:640px}}@media (min-width:768px){.container{max-width:768px}}@media (min-width:1024px){.container{max-width:1024px}}@media (min-width:1280px){.container{max-width:1280px}}@media (min-width:1536px){.container{max-width:1536px}}.pointer-events-none{pointer-events:none}.pointer-events-auto{pointer-events:auto}.visible{visibility:visible}.collapse{visibility:collapse}.fixed{position:fixed}.absolute{position:absolute}.relative{position:relative}.inset-0{inset:0}.inset-3{inset:.75rem}.inset-y-0{top:0;bottom:0}.bottom-20{bottom:5rem}.end-2{inset-inline-end:.5rem}.end-4{inset-inline-end:1rem}.start-0{inset-inline-start:0}.start-3{inset-inline-start:.75rem}.top-1\/2{top:50%}.z-10{z-index:10}.z-20{z-index:20}.z-30{z-index:30}.z-40{z-index:40}.z-50{z-index:50}.z-\[60\]{z-index:60}.mx-auto{margin-left:auto;margin-right:auto}.my-2{margin-top:.5rem;margin-bottom:.5rem}.my-2\.5{margin-top:.625rem;margin-bottom:.625rem}.my-3{margin-top:.75rem;margin-bottom:.75rem}.mb-1{margin-bottom:.25rem}.mb-1\.5{margin-bottom:.375rem}.mb-2{margin-bottom:.5rem}.mb-3{margin-bottom:.75rem}.mt-0\.5{margin-top:.125rem}.mt-1{margin-top:.25rem}.mt-1\.5{margin-top:.375rem}.mt-2{margin-top:.5rem}.mt-3{margin-top:.75rem}.mt-4{margin-top:1rem}.block{display:block}.inline-block{display:inline-block}.flex{display:flex}.inline-flex{display:inline-flex}.table{display:table}.grid{display:grid}.contents{display:contents}.hidden{display:none}.h-1{height:.25rem}.h-1\.5{height:.375rem}.h-10{height:2.5rem}.h-2{height:.5rem}.h-2\.5{height:.625rem}.h-3\.5{height:.875rem}.h-4{height:1rem}.h-5{height:1.25rem}.h-8{height:2rem}.h-\[820px\]{height:820px}.h-full{height:100%}.h-px{height:1px}.h-screen{height:100vh}.max-h-36{max-height:9rem}.max-h-\[340px\]{max-height:340px}.max-h-\[420px\]{max-height:420px}.max-h-\[80vh\]{max-height:80vh}.max-h-\[82vh\]{max-height:82vh}.max-h-\[90vh\]{max-height:90vh}.max-h-full{max-height:100%}.min-h-\[230px\]{min-height:230px}.min-h-screen{min-height:100vh}.w-1\.5{width:.375rem}.w-10{width:2.5rem}.w-16{width:4rem}.w-2{width:.5rem}.w-2\.5{width:.625rem}.w-20{width:5rem}.w-24{width:6rem}.w-3\.5{width:.875rem}.w-4{width:1rem}.w-5{width:1.25rem}.w-72{width:18rem}.w-8{width:2rem}.w-\[390px\]{width:390px}.w-full{width:100%}.min-w-0{min-width:0}.min-w-\[140px\]{min-width:140px}.max-w-2xl{max-width:42rem}.max-w-3xl{max-width:48rem}.max-w-4xl{max-width:56rem}.max-w-5xl{max-width:64rem}.max-w-6xl{max-width:72rem}.max-w-\[140px\]{max-width:140px}.max-w-\[150px\]{max-width:150px}.max-w-\[220px\]{max-width:220px}.max-w-\[85px\]{max-width:85px}.max-w-\[86\%\]{max-width:86%}.max-w-\[96\%\]{max-width:96%}.max-w-\[96px\]{max-width:96px}.max-w-full{max-width:100%}.max-w-lg{max-width:32rem}.max-w-md{max-width:28rem}.max-w-sm{max-width:24rem}.max-w-xl{max-width:36rem}.flex-1{flex:1 1 0%}.shrink-0{flex-shrink:0}.border-collapse{border-collapse:collapse}.-translate-x-full{--tw-translate-x:-100%}.-translate-x-full,.-translate-y-1\/2{transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.-translate-y-1\/2{--tw-translate-y:-50%}.transform{transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}@keyframes pulse{50%{opacity:.5}}.animate-pulse{animation:pulse 2s cubic-bezier(.4,0,.6,1) infinite}.cursor-pointer{cursor:pointer}.resize-none{resize:none}.appearance-none{-webkit-appearance:none;-moz-appearance:none;appearance:none}.grid-cols-1{grid-template-columns:repeat(1,minmax(0,1fr))}.grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.flex-col{flex-direction:column}.flex-wrap{flex-wrap:wrap}.flex-nowrap{flex-wrap:nowrap}.items-start{align-items:flex-start}.items-end{align-items:flex-end}.items-center{align-items:center}.justify-start{justify-content:flex-start}.justify-end{justify-content:flex-end}.justify-center{justify-content:center}.justify-between{justify-content:space-between}.gap-1{gap:.25rem}.gap-1\.5{gap:.375rem}.gap-2{gap:.5rem}.gap-2\.5{gap:.625rem}.gap-3{gap:.75rem}.space-y-1>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(.25rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(.25rem*var(--tw-space-y-reverse))}.space-y-1\.5>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(.375rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(.375rem*var(--tw-space-y-reverse))}.space-y-2>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(.5rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(.5rem*var(--tw-space-y-reverse))}.space-y-2\.5>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(.625rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(.625rem*var(--tw-space-y-reverse))}.space-y-3>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(.75rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(.75rem*var(--tw-space-y-reverse))}.space-y-4>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(1rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(1rem*var(--tw-space-y-reverse))}.space-y-5>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(1.25rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(1.25rem*var(--tw-space-y-reverse))}.space-y-6>:not([hidden])~:not([hidden]){--tw-space-y-reverse:0;margin-top:calc(1.5rem*(1 - var(--tw-space-y-reverse)));margin-bottom:calc(1.5rem*var(--tw-space-y-reverse))}.overflow-auto{overflow:auto}.overflow-hidden{overflow:hidden}.overflow-x-auto{overflow-x:auto}.overflow-y-auto{overflow-y:auto}.truncate{overflow:hidden;text-overflow:ellipsis}.truncate,.whitespace-nowrap{white-space:nowrap}.whitespace-pre-wrap{white-space:pre-wrap}.break-words{overflow-wrap:break-word}.rounded{border-radius:.25rem}.rounded-2xl{border-radius:1rem}.rounded-\[2\.25rem\]{border-radius:2.25rem}.rounded-full{border-radius:9999px}.rounded-lg{border-radius:.5rem}.rounded-md{border-radius:.375rem}.rounded-xl{border-radius:.75rem}.rounded-ee-sm{border-end-end-radius:.125rem}.rounded-es-sm{border-end-start-radius:.125rem}.border{border-width:1px}.border-0{border-width:0}.border-2{border-width:2px}.border-\[8px\]{border-width:8px}.border-x{border-left-width:1px;border-right-width:1px}.border-b{border-bottom-width:1px}.border-e{border-inline-end-width:1px}.border-s{border-inline-start-width:1px}.border-t{border-top-width:1px}.border-dashed{border-style:dashed}.border-amber-500\/30{border-color:rgba(245,158,11,.3)}.border-amber-500\/35{border-color:rgba(245,158,11,.35)}.border-cyan-500\/30{border-color:rgba(6,182,212,.3)}.border-cyan-500\/35{border-color:rgba(6,182,212,.35)}.border-cyan-500\/40{border-color:rgba(6,182,212,.4)}.border-cyan-500\/50{border-color:rgba(6,182,212,.5)}.border-emerald-400{--tw-border-opacity:1;border-color:rgb(52 211 153/var(--tw-border-opacity,1))}.border-emerald-500{--tw-border-opacity:1;border-color:rgb(16 185 129/var(--tw-border-opacity,1))}.border-emerald-500\/30{border-color:rgba(16,185,129,.3)}.border-emerald-500\/35{border-color:rgba(16,185,129,.35)}.border-emerald-500\/40{border-color:rgba(16,185,129,.4)}.border-emerald-500\/50{border-color:rgba(16,185,129,.5)}.border-red-500\/25{border-color:rgba(239,68,68,.25)}.border-red-500\/30{border-color:rgba(239,68,68,.3)}.border-red-500\/40{border-color:rgba(239,68,68,.4)}.border-red-500\/50{border-color:rgba(239,68,68,.5)}.border-slate-600{--tw-border-opacity:1;border-color:rgb(71 85 105/var(--tw-border-opacity,1))}.border-slate-800{--tw-border-opacity:1;border-color:rgb(30 41 59/var(--tw-border-opacity,1))}.border-transparent{border-color:transparent}.border-zinc-700{--tw-border-opacity:1;border-color:rgb(63 63 70/var(--tw-border-opacity,1))}.border-zinc-800{--tw-border-opacity:1;border-color:rgb(39 39 42/var(--tw-border-opacity,1))}.border-zinc-800\/80{border-color:rgba(39,39,42,.8)}.bg-amber-400{--tw-bg-opacity:1;background-color:rgb(251 191 36/var(--tw-bg-opacity,1))}.bg-amber-500\/10{background-color:rgba(245,158,11,.1)}.bg-amber-500\/15{background-color:rgba(245,158,11,.15)}.bg-amber-500\/20{background-color:rgba(245,158,11,.2)}.bg-amber-600{--tw-bg-opacity:1;background-color:rgb(217 119 6/var(--tw-bg-opacity,1))}.bg-black{--tw-bg-opacity:1;background-color:rgb(0 0 0/var(--tw-bg-opacity,1))}.bg-black\/75{background-color:rgba(0,0,0,.75)}.bg-black\/80{background-color:rgba(0,0,0,.8)}.bg-black\/85{background-color:rgba(0,0,0,.85)}.bg-cyan-400{--tw-bg-opacity:1;background-color:rgb(34 211 238/var(--tw-bg-opacity,1))}.bg-cyan-500\/10{background-color:rgba(6,182,212,.1)}.bg-cyan-500\/15{background-color:rgba(6,182,212,.15)}.bg-cyan-600{--tw-bg-opacity:1;background-color:rgb(8 145 178/var(--tw-bg-opacity,1))}.bg-emerald-400{--tw-bg-opacity:1;background-color:rgb(52 211 153/var(--tw-bg-opacity,1))}.bg-emerald-500{--tw-bg-opacity:1;background-color:rgb(16 185 129/var(--tw-bg-opacity,1))}.bg-emerald-500\/10{background-color:rgba(16,185,129,.1)}.bg-emerald-500\/15{background-color:rgba(16,185,129,.15)}.bg-emerald-500\/20{background-color:rgba(16,185,129,.2)}.bg-emerald-600{--tw-bg-opacity:1;background-color:rgb(5 150 105/var(--tw-bg-opacity,1))}.bg-emerald-600\/20{background-color:rgba(5,150,105,.2)}.bg-emerald-800\/60{background-color:rgba(6,95,70,.6)}.bg-red-500\/10{background-color:rgba(239,68,68,.1)}.bg-red-500\/15{background-color:rgba(239,68,68,.15)}.bg-red-500\/20{background-color:rgba(239,68,68,.2)}.bg-red-600{--tw-bg-opacity:1;background-color:rgb(220 38 38/var(--tw-bg-opacity,1))}.bg-slate-800{--tw-bg-opacity:1;background-color:rgb(30 41 59/var(--tw-bg-opacity,1))}.bg-slate-900{--tw-bg-opacity:1;background-color:rgb(15 23 42/var(--tw-bg-opacity,1))}.bg-slate-900\/80{background-color:rgba(15,23,42,.8)}.bg-slate-950{--tw-bg-opacity:1;background-color:rgb(2 6 23/var(--tw-bg-opacity,1))}.bg-transparent{background-color:transparent}.bg-white{--tw-bg-opacity:1;background-color:rgb(255 255 255/var(--tw-bg-opacity,1))}.bg-zinc-600{--tw-bg-opacity:1;background-color:rgb(82 82 91/var(--tw-bg-opacity,1))}.bg-zinc-800{--tw-bg-opacity:1;background-color:rgb(39 39 42/var(--tw-bg-opacity,1))}.bg-zinc-800\/80{background-color:rgba(39,39,42,.8)}.bg-zinc-900{--tw-bg-opacity:1;background-color:rgb(24 24 27/var(--tw-bg-opacity,1))}.bg-zinc-900\/20{background-color:rgba(24,24,27,.2)}.bg-zinc-900\/40{background-color:rgba(24,24,27,.4)}.bg-zinc-900\/60{background-color:rgba(24,24,27,.6)}.bg-zinc-900\/80{background-color:rgba(24,24,27,.8)}.bg-zinc-900\/90{background-color:rgba(24,24,27,.9)}.bg-zinc-900\/95{background-color:rgba(24,24,27,.95)}.bg-zinc-950{--tw-bg-opacity:1;background-color:rgb(9 9 11/var(--tw-bg-opacity,1))}.bg-zinc-950\/60{background-color:rgba(9,9,11,.6)}.bg-zinc-950\/70{background-color:rgba(9,9,11,.7)}.bg-zinc-950\/90{background-color:rgba(9,9,11,.9)}.bg-gradient-to-br{background-image:linear-gradient(to bottom right,var(--tw-gradient-stops))}.bg-gradient-to-r{background-image:linear-gradient(to right,var(--tw-gradient-stops))}.from-emerald-500{--tw-gradient-from:#10b981 var(--tw-gradient-from-position);--tw-gradient-to:rgba(16,185,129,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-emerald-600{--tw-gradient-from:#059669 var(--tw-gradient-from-position);--tw-gradient-to:rgba(5,150,105,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-emerald-950{--tw-gradient-from:#022c22 var(--tw-gradient-from-position);--tw-gradient-to:rgba(2,44,34,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-emerald-950\/70{--tw-gradient-from:rgba(2,44,34,.7) var(--tw-gradient-from-position);--tw-gradient-to:rgba(2,44,34,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.from-emerald-950\/80{--tw-gradient-from:rgba(2,44,34,.8) var(--tw-gradient-from-position);--tw-gradient-to:rgba(2,44,34,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.via-slate-950{--tw-gradient-to:rgba(2,6,23,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),#020617 var(--tw-gradient-via-position),var(--tw-gradient-to)}.via-teal-500{--tw-gradient-to:rgba(20,184,166,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),#14b8a6 var(--tw-gradient-via-position),var(--tw-gradient-to)}.to-cyan-600{--tw-gradient-to:#0891b2 var(--tw-gradient-to-position)}.to-cyan-950\/80{--tw-gradient-to:rgba(8,51,68,.8) var(--tw-gradient-to-position)}.to-slate-900{--tw-gradient-to:#0f172a var(--tw-gradient-to-position)}.to-slate-950{--tw-gradient-to:#020617 var(--tw-gradient-to-position)}.to-teal-600{--tw-gradient-to:#0d9488 var(--tw-gradient-to-position)}.object-contain{-o-object-fit:contain;object-fit:contain}.p-1{padding:.25rem}.p-1\.5{padding:.375rem}.p-2{padding:.5rem}.p-2\.5{padding:.625rem}.p-3{padding:.75rem}.p-3\.5{padding:.875rem}.p-4{padding:1rem}.p-5{padding:1.25rem}.p-6{padding:1.5rem}.px-1{padding-left:.25rem;padding-right:.25rem}.px-1\.5{padding-left:.375rem;padding-right:.375rem}.px-2{padding-left:.5rem;padding-right:.5rem}.px-2\.5{padding-left:.625rem;padding-right:.625rem}.px-3{padding-left:.75rem;padding-right:.75rem}.px-3\.5{padding-left:.875rem;padding-right:.875rem}.px-4{padding-left:1rem;padding-right:1rem}.px-5{padding-left:1.25rem;padding-right:1.25rem}.px-6{padding-left:1.5rem;padding-right:1.5rem}.py-0\.5{padding-top:.125rem;padding-bottom:.125rem}.py-1{padding-top:.25rem;padding-bottom:.25rem}.py-1\.5{padding-top:.375rem;padding-bottom:.375rem}.py-2{padding-top:.5rem;padding-bottom:.5rem}.py-2\.5{padding-top:.625rem;padding-bottom:.625rem}.py-3{padding-top:.75rem;padding-bottom:.75rem}.py-3\.5{padding-top:.875rem;padding-bottom:.875rem}.py-4{padding-top:1rem;padding-bottom:1rem}.py-5{padding-top:1.25rem;padding-bottom:1.25rem}.pb-2{padding-bottom:.5rem}.pb-5{padding-bottom:1.25rem}.pe-3{padding-inline-end:.75rem}.pe-7{padding-inline-end:1.75rem}.ps-3{padding-inline-start:.75rem}.ps-8{padding-inline-start:2rem}.pt-2{padding-top:.5rem}.pt-3{padding-top:.75rem}.pt-6{padding-top:1.5rem}.text-center{text-align:center}.text-start{text-align:start}.font-mono{font-family:JetBrains Mono,monospace}.text-2xl{font-size:1.5rem;line-height:2rem}.text-\[10px\]{font-size:10px}.text-\[11px\]{font-size:11px}.text-lg{font-size:1.125rem;line-height:1.75rem}.text-sm{font-size:.875rem;line-height:1.25rem}.text-xl{font-size:1.25rem;line-height:1.75rem}.text-xs{font-size:.75rem;line-height:1rem}.font-bold{font-weight:700}.font-medium{font-weight:500}.font-semibold{font-weight:600}.uppercase{text-transform:uppercase}.leading-relaxed{line-height:1.625}.tracking-tight{letter-spacing:-.025em}.tracking-wider{letter-spacing:.05em}.text-amber-200{--tw-text-opacity:1;color:rgb(253 230 138/var(--tw-text-opacity,1))}.text-amber-300{--tw-text-opacity:1;color:rgb(252 211 77/var(--tw-text-opacity,1))}.text-amber-400{--tw-text-opacity:1;color:rgb(251 191 36/var(--tw-text-opacity,1))}.text-cyan-200{--tw-text-opacity:1;color:rgb(165 243 252/var(--tw-text-opacity,1))}.text-cyan-300{--tw-text-opacity:1;color:rgb(103 232 249/var(--tw-text-opacity,1))}.text-cyan-400{--tw-text-opacity:1;color:rgb(34 211 238/var(--tw-text-opacity,1))}.text-emerald-300{--tw-text-opacity:1;color:rgb(110 231 183/var(--tw-text-opacity,1))}.text-emerald-400{--tw-text-opacity:1;color:rgb(52 211 153/var(--tw-text-opacity,1))}.text-indigo-400{--tw-text-opacity:1;color:rgb(129 140 248/var(--tw-text-opacity,1))}.text-purple-400{--tw-text-opacity:1;color:rgb(192 132 252/var(--tw-text-opacity,1))}.text-red-300{--tw-text-opacity:1;color:rgb(252 165 165/var(--tw-text-opacity,1))}.text-red-400{--tw-text-opacity:1;color:rgb(248 113 113/var(--tw-text-opacity,1))}.text-slate-100{--tw-text-opacity:1;color:rgb(241 245 249/var(--tw-text-opacity,1))}.text-slate-300{--tw-text-opacity:1;color:rgb(203 213 225/var(--tw-text-opacity,1))}.text-slate-400{--tw-text-opacity:1;color:rgb(148 163 184/var(--tw-text-opacity,1))}.text-slate-950{--tw-text-opacity:1;color:rgb(2 6 23/var(--tw-text-opacity,1))}.text-white{--tw-text-opacity:1;color:rgb(255 255 255/var(--tw-text-opacity,1))}.text-zinc-100{--tw-text-opacity:1;color:rgb(244 244 245/var(--tw-text-opacity,1))}.text-zinc-200{--tw-text-opacity:1;color:rgb(228 228 231/var(--tw-text-opacity,1))}.text-zinc-300{--tw-text-opacity:1;color:rgb(212 212 216/var(--tw-text-opacity,1))}.text-zinc-400{--tw-text-opacity:1;color:rgb(161 161 170/var(--tw-text-opacity,1))}.text-zinc-500{--tw-text-opacity:1;color:rgb(113 113 122/var(--tw-text-opacity,1))}.text-zinc-600{--tw-text-opacity:1;color:rgb(82 82 91/var(--tw-text-opacity,1))}.text-zinc-900{--tw-text-opacity:1;color:rgb(24 24 27/var(--tw-text-opacity,1))}.underline{text-decoration-line:underline}.line-through{text-decoration-line:line-through}.antialiased{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}.placeholder-zinc-500::-moz-placeholder{--tw-placeholder-opacity:1;color:rgb(113 113 122/var(--tw-placeholder-opacity,1))}.placeholder-zinc-500::placeholder{--tw-placeholder-opacity:1;color:rgb(113 113 122/var(--tw-placeholder-opacity,1))}.placeholder-zinc-600::-moz-placeholder{--tw-placeholder-opacity:1;color:rgb(82 82 91/var(--tw-placeholder-opacity,1))}.placeholder-zinc-600::placeholder{--tw-placeholder-opacity:1;color:rgb(82 82 91/var(--tw-placeholder-opacity,1))}.accent-cyan-500{accent-color:#06b6d4}.accent-emerald-500{accent-color:#10b981}.accent-red-500{accent-color:#ef4444}.opacity-70{opacity:.7}.opacity-80{opacity:.8}.shadow{--tw-shadow:0 1px 3px 0 rgba(0,0,0,.1),0 1px 2px -1px rgba(0,0,0,.1);--tw-shadow-colored:0 1px 3px 0 var(--tw-shadow-color),0 1px 2px -1px var(--tw-shadow-color)}.shadow,.shadow-2xl{box-shadow:var(--tw-ring-offset-shadow,0 0 #0000),var(--tw-ring-shadow,0 0 #0000),var(--tw-shadow)}.shadow-2xl{--tw-shadow:0 25px 50px -12px rgba(0,0,0,.25);--tw-shadow-colored:0 25px 50px -12px var(--tw-shadow-color)}.shadow-lg{--tw-shadow:0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -4px rgba(0,0,0,.1);--tw-shadow-colored:0 10px 15px -3px var(--tw-shadow-color),0 4px 6px -4px var(--tw-shadow-color)}.shadow-lg,.shadow-sm{box-shadow:var(--tw-ring-offset-shadow,0 0 #0000),var(--tw-ring-shadow,0 0 #0000),var(--tw-shadow)}.shadow-sm{--tw-shadow:0 1px 2px 0 rgba(0,0,0,.05);--tw-shadow-colored:0 1px 2px 0 var(--tw-shadow-color)}.shadow-xl{--tw-shadow:0 20px 25px -5px rgba(0,0,0,.1),0 8px 10px -6px rgba(0,0,0,.1);--tw-shadow-colored:0 20px 25px -5px var(--tw-shadow-color),0 8px 10px -6px var(--tw-shadow-color);box-shadow:var(--tw-ring-offset-shadow,0 0 #0000),var(--tw-ring-shadow,0 0 #0000),var(--tw-shadow)}.shadow-emerald-500\/20{--tw-shadow-color:rgba(16,185,129,.2);--tw-shadow:var(--tw-shadow-colored)}.outline{outline-style:solid}.filter{filter:var(--tw-blur) var(--tw-brightness) var(--tw-contrast) var(--tw-grayscale) var(--tw-hue-rotate) var(--tw-invert) var(--tw-saturate) var(--tw-sepia) var(--tw-drop-shadow)}.backdrop-blur-md{--tw-backdrop-blur:blur(12px)}.backdrop-blur-md,.backdrop-blur-sm{-webkit-backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia);backdrop-filter:var(--tw-backdrop-blur) var(--tw-backdrop-brightness) var(--tw-backdrop-contrast) var(--tw-backdrop-grayscale) var(--tw-backdrop-hue-rotate) var(--tw-backdrop-invert) var(--tw-backdrop-opacity) var(--tw-backdrop-saturate) var(--tw-backdrop-sepia)}.backdrop-blur-sm{--tw-backdrop-blur:blur(4px)}.transition{transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,-webkit-backdrop-filter;transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,backdrop-filter;transition-property:color,background-color,border-color,text-decoration-color,fill,stroke,opacity,box-shadow,transform,filter,backdrop-filter,-webkit-backdrop-filter;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-all{transition-property:all;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.transition-transform{transition-property:transform;transition-timing-function:cubic-bezier(.4,0,.2,1);transition-duration:.15s}.duration-300{transition-duration:.3s}.ease-in-out{transition-timing-function:cubic-bezier(.4,0,.2,1)}.ease-out{transition-timing-function:cubic-bezier(0,0,.2,1)}.selection\:bg-emerald-500\/30 ::-moz-selection{background-color:rgba(16,185,129,.3)}.selection\:bg-emerald-500\/30 ::selection{background-color:rgba(16,185,129,.3)}.selection\:text-emerald-200 ::-moz-selection{--tw-text-opacity:1;color:rgb(167 243 208/var(--tw-text-opacity,1))}.selection\:text-emerald-200 ::selection{--tw-text-opacity:1;color:rgb(167 243 208/var(--tw-text-opacity,1))}.selection\:bg-emerald-500\/30::-moz-selection{background-color:rgba(16,185,129,.3)}.selection\:bg-emerald-500\/30::selection{background-color:rgba(16,185,129,.3)}.selection\:text-emerald-200::-moz-selection{--tw-text-opacity:1;color:rgb(167 243 208/var(--tw-text-opacity,1))}.selection\:text-emerald-200::selection{--tw-text-opacity:1;color:rgb(167 243 208/var(--tw-text-opacity,1))}.focus-within\:border-emerald-500\/60:focus-within{border-color:rgba(16,185,129,.6)}.hover\:border-amber-400:hover{--tw-border-opacity:1;border-color:rgb(251 191 36/var(--tw-border-opacity,1))}.hover\:border-cyan-500\/40:hover{border-color:rgba(6,182,212,.4)}.hover\:border-cyan-500\/50:hover{border-color:rgba(6,182,212,.5)}.hover\:border-emerald-400:hover{--tw-border-opacity:1;border-color:rgb(52 211 153/var(--tw-border-opacity,1))}.hover\:border-emerald-500\/40:hover{border-color:rgba(16,185,129,.4)}.hover\:border-emerald-500\/50:hover{border-color:rgba(16,185,129,.5)}.hover\:border-zinc-500:hover{--tw-border-opacity:1;border-color:rgb(113 113 122/var(--tw-border-opacity,1))}.hover\:border-zinc-700:hover{--tw-border-opacity:1;border-color:rgb(63 63 70/var(--tw-border-opacity,1))}.hover\:bg-amber-500:hover{--tw-bg-opacity:1;background-color:rgb(245 158 11/var(--tw-bg-opacity,1))}.hover\:bg-amber-500\/20:hover{background-color:rgba(245,158,11,.2)}.hover\:bg-amber-500\/30:hover{background-color:rgba(245,158,11,.3)}.hover\:bg-cyan-500:hover{--tw-bg-opacity:1;background-color:rgb(6 182 212/var(--tw-bg-opacity,1))}.hover\:bg-cyan-500\/20:hover{background-color:rgba(6,182,212,.2)}.hover\:bg-cyan-500\/25:hover{background-color:rgba(6,182,212,.25)}.hover\:bg-emerald-500:hover{--tw-bg-opacity:1;background-color:rgb(16 185 129/var(--tw-bg-opacity,1))}.hover\:bg-emerald-500\/25:hover{background-color:rgba(16,185,129,.25)}.hover\:bg-red-500:hover{--tw-bg-opacity:1;background-color:rgb(239 68 68/var(--tw-bg-opacity,1))}.hover\:bg-red-500\/30:hover{background-color:rgba(239,68,68,.3)}.hover\:bg-zinc-100:hover{--tw-bg-opacity:1;background-color:rgb(244 244 245/var(--tw-bg-opacity,1))}.hover\:bg-zinc-700:hover{--tw-bg-opacity:1;background-color:rgb(63 63 70/var(--tw-bg-opacity,1))}.hover\:bg-zinc-800:hover{--tw-bg-opacity:1;background-color:rgb(39 39 42/var(--tw-bg-opacity,1))}.hover\:bg-zinc-800\/70:hover{background-color:rgba(39,39,42,.7)}.hover\:bg-zinc-800\/80:hover{background-color:rgba(39,39,42,.8)}.hover\:bg-zinc-900:hover{--tw-bg-opacity:1;background-color:rgb(24 24 27/var(--tw-bg-opacity,1))}.hover\:from-emerald-500:hover{--tw-gradient-from:#10b981 var(--tw-gradient-from-position);--tw-gradient-to:rgba(16,185,129,0) var(--tw-gradient-to-position);--tw-gradient-stops:var(--tw-gradient-from),var(--tw-gradient-to)}.hover\:to-teal-500:hover{--tw-gradient-to:#14b8a6 var(--tw-gradient-to-position)}.hover\:text-amber-300:hover{--tw-text-opacity:1;color:rgb(252 211 77/var(--tw-text-opacity,1))}.hover\:text-emerald-300:hover{--tw-text-opacity:1;color:rgb(110 231 183/var(--tw-text-opacity,1))}.hover\:text-red-400:hover{--tw-text-opacity:1;color:rgb(248 113 113/var(--tw-text-opacity,1))}.hover\:text-white:hover{--tw-text-opacity:1;color:rgb(255 255 255/var(--tw-text-opacity,1))}.hover\:text-zinc-200:hover{--tw-text-opacity:1;color:rgb(228 228 231/var(--tw-text-opacity,1))}.focus\:border-amber-400:focus{--tw-border-opacity:1;border-color:rgb(251 191 36/var(--tw-border-opacity,1))}.focus\:border-amber-500:focus{--tw-border-opacity:1;border-color:rgb(245 158 11/var(--tw-border-opacity,1))}.focus\:border-cyan-500:focus{--tw-border-opacity:1;border-color:rgb(6 182 212/var(--tw-border-opacity,1))}.focus\:border-emerald-500:focus{--tw-border-opacity:1;border-color:rgb(16 185 129/var(--tw-border-opacity,1))}.focus\:border-emerald-500\/60:focus{border-color:rgba(16,185,129,.6)}.focus\:border-indigo-500:focus{--tw-border-opacity:1;border-color:rgb(99 102 241/var(--tw-border-opacity,1))}.focus\:border-purple-500:focus{--tw-border-opacity:1;border-color:rgb(168 85 247/var(--tw-border-opacity,1))}.focus\:border-red-400:focus{--tw-border-opacity:1;border-color:rgb(248 113 113/var(--tw-border-opacity,1))}.focus\:outline-none:focus{outline:2px solid transparent;outline-offset:2px}.disabled\:opacity-40:disabled{opacity:.4}.group:hover .group-hover\:opacity-100{opacity:1}@media (min-width:640px){.sm\:col-span-2{grid-column:span 2/span 2}.sm\:inline{display:inline}.sm\:flex{display:flex}.sm\:hidden{display:none}.sm\:w-44{width:11rem}.sm\:w-auto{width:auto}.sm\:max-w-\[220px\]{max-width:220px}.sm\:max-w-\[78\%\]{max-width:78%}.sm\:max-w-\[90\%\]{max-width:90%}.sm\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.sm\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.sm\:flex-row{flex-direction:row}.sm\:flex-col{flex-direction:column}.sm\:items-center{align-items:center}.sm\:gap-1\.5{gap:.375rem}.sm\:gap-2{gap:.5rem}.sm\:border-b-0{border-bottom-width:0}.sm\:border-e{border-inline-end-width:1px}.sm\:p-3\.5{padding:.875rem}.sm\:p-4{padding:1rem}.sm\:px-4{padding-left:1rem;padding-right:1rem}.sm\:px-5{padding-left:1.25rem;padding-right:1.25rem}.sm\:px-6{padding-left:1.5rem;padding-right:1.5rem}.sm\:py-8{padding-top:2rem;padding-bottom:2rem}.sm\:text-3xl{font-size:1.875rem;line-height:2.25rem}.sm\:text-sm{font-size:.875rem;line-height:1.25rem}}@media (min-width:768px){.md\:col-span-2{grid-column:span 2/span 2}.md\:flex{display:flex}.md\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}}@media (min-width:1024px){.lg\:static{position:static}.lg\:hidden{display:none}.lg\:w-\[48\%\]{width:48%}.lg\:w-\[52\%\]{width:52%}.lg\:translate-x-0{--tw-translate-x:0px;transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.lg\:opacity-0{opacity:0}}.rtl\:translate-x-full:where([dir=rtl],[dir=rtl] *){--tw-translate-x:100%;transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}.rtl\:rotate-180:where([dir=rtl],[dir=rtl] *){--tw-rotate:180deg;transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}@media (min-width:1024px){.rtl\:lg\:translate-x-0:where([dir=rtl],[dir=rtl] *){--tw-translate-x:0px;transform:translate(var(--tw-translate-x),var(--tw-translate-y)) rotate(var(--tw-rotate)) skewX(var(--tw-skew-x)) skewY(var(--tw-skew-y)) scaleX(var(--tw-scale-x)) scaleY(var(--tw-scale-y))}}</style>
 
   <style>
     /* Base résiliente et thème sombre immédiat */
@@ -130,6 +115,19 @@
     /* Texte d'aide de la zone de saisie sur une seule ligne (mobile) */
     #prompt-textarea::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     #prompt-textarea { font-size: 16px; border: 0; outline: none; box-shadow: none; } /* 16px évite le zoom automatique sur iPhone */
+
+    /* ===== INTERFACE ALLÉGÉE — éléments masqués (supprimez une ligne pour réafficher l'élément) ===== */
+    #btn-sidebar-deploy,          /* Déployer (GitHub / Vercel / Firebase) — menu */
+    #btn-open-deploy,             /* Déployer — en-tête */
+    #btn-studio-deploy-guide,     /* Déployer — Studio */
+    #btn-install-download-pack,   /* Pack développeur — fenêtre Installer */
+    #install-apk-card,            /* Carte « Package Android APK » — fenêtre Installer */
+    #btn-export-chat-md,          /* Exporter la discussion (.md) */
+    #btn-open-brain,              /* Cerveau IA */
+    #btn-toggle-kb,               /* Bouton 📚 base de connaissances */
+    #welcome-demos,               /* Boutons de démo de l'accueil */
+    #welcome-engines              /* Bandeau des moteurs de l'accueil */
+    { display: none !important; }
 
     /* Animation points de chargement */
     @keyframes bounceDot {
@@ -552,7 +550,7 @@
                 <span class="w-16 h-3.5 bg-black rounded-full inline-block"></span>
                 <span>5G 100%</span>
               </div>
-              <iframe id="studio-iframe" title="Aperçu BOUA AI" sandbox="allow-scripts allow-forms allow-modals" class="w-full flex-1 border-0 bg-white"></iframe>
+              <iframe id="studio-iframe" title="Aperçu BOUA AI" sandbox="allow-scripts allow-forms allow-modals allow-popups allow-downloads" referrerpolicy="no-referrer" class="w-full flex-1 border-0 bg-white"></iframe>
               <div id="phone-bottom-bar" class="hidden bg-zinc-900 py-2 items-center justify-center border-t border-zinc-800 shrink-0">
                 <span class="w-24 h-1 bg-zinc-600 rounded-full inline-block"></span>
               </div>
@@ -895,7 +893,7 @@
             <p class="text-zinc-300 leading-relaxed">Cliquez sur l’icône <strong>Installer (⊕)</strong> dans la barre d’adresse de Chrome, Edge ou Brave.</p>
           </div>
 
-          <div class="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1.5">
+          <div id="install-apk-card" class="p-3.5 rounded-xl bg-zinc-950 border border-zinc-800 space-y-1.5">
             <p class="font-bold text-purple-400">📦 Package Android APK</p>
             <p class="text-zinc-300 leading-relaxed">Téléchargez le pack complet avec <code>capacitor.config.json</code> pour générer l’APK Android Studio.</p>
           </div>
@@ -979,7 +977,7 @@
 
         <!-- Déconnecté -->
         <section id="account-signed-out" class="space-y-3">
-          <p class="text-zinc-400">Connectez-vous pour retrouver vos discussions, votre mémoire et vos agents sur tous vos appareils (site web, téléphone Android, PC).</p>
+          <p class="text-zinc-400">BOUA AI fonctionne déjà sans compte (mode invité). Créez un compte gratuit pour retrouver vos discussions sur tous vos appareils (site web, téléphone Android, PC) et avoir plus de messages par minute.</p>
           <button id="btn-google-signin" type="button" class="w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white hover:bg-zinc-100 text-zinc-900 font-semibold">
             <svg class="w-4 h-4" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.9 1.2 8 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
             Continuer avec Google
@@ -1184,9 +1182,6 @@
   <!-- Bibliothèques (versions figées + empreinte SRI : un fichier modifié sur le CDN est refusé) -->
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js" integrity="sha384-/TQbtLCAerC3jgaim+N78RZSDYV7ryeoBCVqTuzRrFec2akfBkHS7ACQ3PQhvMVi" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.7/dist/purify.min.js" integrity="sha384-XQqX/4yiUGu+oyr87jvWzRuqBUK/adrY0DunhL+tID9m/9dwSpV8h9Fk/Sg6ifVQ" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.10.0/highlight.min.js" integrity="sha384-GdEWAbCjn+ghjX0gLx7/N1hyTVmPAjdC2OvoAA0RyNcAOhqwtT8qnbCxWle2+uJX" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js" integrity="sha384-7zkQWkzuo3B5mTepMUcHkMB5jZaolc2xDwL6VFqjFALcbeS9Ggm/Yr2r3Dy4lfFg" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
-  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js" integrity="sha384-43gviWU0YVjaDtb/GhzOouOXtZMP/7XUzwPTstBeZFe/+rCMvRwr4yROQP43s0Xk" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 
   <!-- Firebase (SDK « compat », version figée) : comptes + synchronisation cloud — projet boui-ia -->
   <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
@@ -2286,6 +2281,45 @@
      * RENDU MARKDOWN MODERNE ET SÉCURISÉ
      * marked (GFM : tableaux, listes, code) → DOMPurify (anti-XSS) → KaTeX (formules) → highlight.js (code)
      */
+    /* ---------- Chargement à la demande (allègement) : code coloré et formules seulement si nécessaire ---------- */
+    const LAZY_LIBS = {
+      hljs: {
+        js: ['https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.10.0/highlight.min.js', 'sha384-GdEWAbCjn+ghjX0gLx7/N1hyTVmPAjdC2OvoAA0RyNcAOhqwtT8qnbCxWle2+uJX'],
+        css: ['https://cdn.jsdelivr.net/npm/@highlightjs/cdn-assets@11.10.0/styles/github-dark.min.css', 'sha384-wH75j6z1lH97ZOpMOInqhgKzFkAInZPPSPlZpYKYTOqsaizPvhQZmAtLcPKXpLyH'],
+        ready: () => Boolean(window.hljs),
+      },
+      katex: {
+        js: ['https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js', 'sha384-7zkQWkzuo3B5mTepMUcHkMB5jZaolc2xDwL6VFqjFALcbeS9Ggm/Yr2r3Dy4lfFg'],
+        css: ['https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css', 'sha384-nB0miv6/jRmo5UMMR1wu3Gz6NLsoTkbqJghGIsx//Rlm+ZU03BU6SQNC66uf4l5+'],
+        ready: () => Boolean(window.katex),
+      },
+    };
+    const lazyState = {};
+    function requestLib(name) {
+      const lib = LAZY_LIBS[name];
+      if (!lib || lib.ready() || lazyState[name]) return;
+      lazyState[name] = 'loading';
+      const css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = lib.css[0];
+      css.integrity = lib.css[1];
+      css.crossOrigin = 'anonymous';
+      css.referrerPolicy = 'no-referrer';
+      document.head.appendChild(css);
+      const js = document.createElement('script');
+      js.src = lib.js[0];
+      js.integrity = lib.js[1];
+      js.crossOrigin = 'anonymous';
+      js.referrerPolicy = 'no-referrer';
+      js.onload = () => {
+        lazyState[name] = 'ready';
+        // Réafficher les messages avec le rendu complet (sauf pendant une génération)
+        if (!state.isLoading) renderMessages();
+      };
+      js.onerror = () => (lazyState[name] = 'error');
+      document.head.appendChild(js);
+    }
+
     let purifyHookInstalled = false;
     function installPurifyHook() {
       if (purifyHookInstalled || !window.DOMPurify) return;
@@ -2341,6 +2375,7 @@
           clean = clean.replace(/@@BOUAMATH(\d+)@@/g, (_, i) => {
             const item = maths[Number(i)];
             if (!item) return '';
+            if (!window.katex) requestLib('katex');
             if (window.katex) {
               try {
                 return window.katex.renderToString(item.tex, { displayMode: item.display, throwOnError: false, trust: false, strict: 'ignore' });
@@ -2362,6 +2397,10 @@
         if (pre.dataset.enhanced) return;
         pre.dataset.enhanced = '1';
         const langMatch = (codeEl.className || '').match(/language-([\w-]+)/);
+        if (!window.hljs) {
+          requestLib('hljs');
+          pre.dataset.enhanced = ''; // sera colorié au chargement de la bibliothèque
+        }
         if (window.hljs && codeEl.textContent.length < 120000) {
           try {
             window.hljs.highlightElement(codeEl);
@@ -2788,8 +2827,17 @@ self.addEventListener('fetch', (e) => {
     /**
      * 8. MOTEUR STUDIO VIDÉO ANIMÉE (CANVAS 60 FPS + EXPORT .WEBM)
      */
+    let videoLoopRunning = false;
+    /** Allègement : l'animation ne tourne QUE lorsque le Studio Vidéo est visible (économie de batterie / processeur) */
     function startVideoStudioLoop() {
+      if (videoLoopRunning) return;
+      videoLoopRunning = true;
+      state.videoLastTick = 0;
       function tick(now) {
+        if (!(state.showStudio && state.studioTab === 'video') || document.hidden) {
+          videoLoopRunning = false;
+          return;
+        }
         if (!state.videoLastTick) state.videoLastTick = now;
         const dt = (now - state.videoLastTick) / 1000;
         state.videoLastTick = now;
@@ -2942,72 +2990,6 @@ self.addEventListener('fetch', (e) => {
       setTimeout(() => {
         if (recorder.state !== 'inactive') recorder.stop();
       }, 4200);
-    }
-
-    /**
-     * 9. GÉNÉRATEUR D'IMAGES PROCEDURAL HD
-     */
-    function createProceduralCanvasImage(prompt, aspectRatio, stylePreset) {
-      const dims = {
-        '1:1': [1024, 1024],
-        '16:9': [1280, 720],
-        '9:16': [720, 1280],
-        '4:3': [1024, 768],
-      };
-      const [w, h] = dims[aspectRatio] || [1024, 1024];
-      const canvas = document.createElement('canvas');
-      canvas.width = w;
-      canvas.height = h;
-      const ctx = canvas.getContext('2d');
-
-      let seed = 0;
-      for (let i = 0; i < prompt.length; i++) seed = (seed * 31 + prompt.charCodeAt(i)) >>> 0;
-      const rand = () => {
-        seed = (seed * 1664525 + 1013904223) >>> 0;
-        return seed / 4294967296;
-      };
-
-      const bg = ctx.createLinearGradient(0, 0, w, h);
-      bg.addColorStop(0, '#022c22');
-      bg.addColorStop(0.5, '#09090b');
-      bg.addColorStop(1, '#083344');
-      ctx.fillStyle = bg;
-      ctx.fillRect(0, 0, w, h);
-
-      for (let i = 0; i < 6; i++) {
-        const rx = rand() * w;
-        const ry = rand() * h;
-        const rad = Math.min(w, h) * (0.2 + rand() * 0.35);
-        const rg = ctx.createRadialGradient(rx, ry, 0, rx, ry, rad);
-        rg.addColorStop(0, i % 2 === 0 ? 'rgba(16, 185, 129, 0.32)' : 'rgba(6, 182, 212, 0.26)');
-        rg.addColorStop(1, 'rgba(0,0,0,0)');
-        ctx.fillStyle = rg;
-        ctx.fillRect(0, 0, w, h);
-      }
-
-      ctx.strokeStyle = 'rgba(110, 231, 183, 0.35)';
-      ctx.lineWidth = 2;
-      for (let j = 0; j < 14; j++) {
-        ctx.beginPath();
-        ctx.arc(w * 0.5, h * 0.44, (j + 1) * (Math.min(w, h) * 0.025), rand() * Math.PI, rand() * Math.PI * 2);
-        ctx.stroke();
-      }
-
-      ctx.fillStyle = 'rgba(24, 24, 27, 0.85)';
-      ctx.fillRect(w * 0.08, h * 0.78, w * 0.84, h * 0.14);
-      ctx.strokeStyle = 'rgba(16, 185, 129, 0.5)';
-      ctx.strokeRect(w * 0.08, h * 0.78, w * 0.84, h * 0.14);
-
-      ctx.fillStyle = '#34d399';
-      ctx.font = `bold ${Math.round(w * 0.02)}px Inter, sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.fillText(`BOUA AI STUDIO IMAGE • ${aspectRatio} • ${stylePreset.split(',')[0]}`, w / 2, h * 0.835);
-
-      ctx.fillStyle = '#f4f4f5';
-      ctx.font = `500 ${Math.round(w * 0.019)}px Inter, Cairo, sans-serif`;
-      ctx.fillText(prompt.slice(0, 58), w / 2, h * 0.88);
-
-      return canvas.toDataURL('image/png');
     }
 
     /**
@@ -3371,7 +3353,8 @@ contenu complet du document
 
     function isProviderConfigured(providerId) {
       if (providerId === 'boua') {
-        return Boolean(typeof cloud !== 'undefined' && cloud.ready && cloud.user && !cloud.user.isAnonymous);
+        // Comptes ET invités (connexion invité automatique) : aucune inscription obligatoire
+        return Boolean(typeof cloud !== 'undefined' && cloud.ready && cloud.user);
       }
       if (providerId === 'ollama') return Boolean((state.ollamaUrl || '').trim());
       return Boolean((state.apiKeys[providerId] || '').trim());
@@ -3444,6 +3427,7 @@ contenu complet du document
           alwaysSearch: state.mode === 'search',
           query: state.turnContext?.query || '',
           lang: state.lang,
+          maxTokens: state.mode === 'builder' ? 32768 : 16384,
           temperature: state.mode === 'builder' || state.mode === 'maths' ? 0.2 : 0.5,
         },
         signal
@@ -3559,55 +3543,105 @@ contenu complet du document
       if (fbDot) fbDot.classList.toggle('hidden', !state.autoFallback);
     }
 
+    const IMAGE_DIMS = { '1:1': [1024, 1024], '16:9': [1280, 720], '9:16': [720, 1280], '4:3': [1024, 768] };
+
+    /** Convertit une image SVG en PNG (téléchargement plus pratique) ; garde le SVG si impossible */
+    function svgToPng(svgUrl, w, h) {
+      return new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          try {
+            const c = document.createElement('canvas');
+            c.width = w;
+            c.height = h;
+            c.getContext('2d').drawImage(img, 0, 0, w, h);
+            resolve(c.toDataURL('image/png'));
+          } catch (e) {
+            resolve(svgUrl);
+          }
+        };
+        img.onerror = () => resolve(svgUrl);
+        img.src = svgUrl;
+      });
+    }
+
+    /** Secours : l'IA texte dessine une illustration vectorielle (SVG) — vraie création, pas une fausse image */
+    async function generateSvgIllustration(prompt, aspectRatio, stylePreset, signal) {
+      const [w, h] = IMAGE_DIMS[aspectRatio] || IMAGE_DIMS['1:1'];
+      const instruction =
+        `Dessine une illustration originale et détaillée en SVG pour : « ${prompt} » (style : ${stylePreset}). ` +
+        `Contraintes : un seul élément <svg> avec viewBox="0 0 ${w} ${h}" et xmlns="http://www.w3.org/2000/svg", formes, dégradés et couleurs riches, ` +
+        `AUCUN script, AUCUNE image externe, AUCUN lien. Réponds UNIQUEMENT avec le code SVG, sans explication.`;
+      let raw = '';
+      const msgs = [{ role: 'user', content: instruction, attachments: [] }];
+      if (isProviderConfigured('boua')) {
+        const res = await bouaCloudFetch({ contents: [{ role: 'user', parts: [{ text: instruction }] }], systemInstruction: 'Tu es un illustrateur expert en SVG. Tu réponds uniquement avec du code SVG valide.', temperature: 0.8, maxTokens: 16384 }, signal);
+        let err = '';
+        await readEventStream(res, (json) => {
+          if (json?.error) err = json.error.message;
+          raw += json?.candidates?.[0]?.content?.parts?.map((p) => (p.thought ? '' : p.text || '')).join('') || '';
+        });
+        if (!raw && err) throw new Error(err);
+      } else {
+        const chain = buildExecutionChain();
+        if (!chain.length) throw Object.assign(new Error('Connectez-vous pour générer des images.'), { code: 'NEED_LOGIN' });
+        raw = (await invokeSingleEngine(chain[0], msgs, signal)).rawText;
+      }
+      const m = raw.match(/<svg[\s\S]*<\/svg>/i);
+      if (!m) throw new Error('L’IA n’a pas pu dessiner cette image. Reformulez la demande.');
+      let svg = m[0];
+      // SÉCURITÉ : nettoyage (aucun script, aucun lien externe)
+      if (window.DOMPurify) svg = window.DOMPurify.sanitize(svg, { USE_PROFILES: { svg: true, svgFilters: true }, FORBID_TAGS: ['script', 'foreignObject', 'a', 'image'], FORBID_ATTR: ['href', 'xlink:href'] });
+      if (!/xmlns=/.test(svg)) svg = svg.replace('<svg', '<svg xmlns="http://www.w3.org/2000/svg"');
+      const svgUrl = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+      return svgToPng(svgUrl, w, h);
+    }
+
+    /**
+     * Génération d'image : 1) BOUA Cloud (modèles d'image Gemini) 2) votre clé Gemini 3) illustration vectorielle par l'IA.
+     * Retourne { url, kind: 'photo' | 'vector' } — jamais de fausse image.
+     */
     async function callGeminiImage(prompt, aspectRatio, stylePreset, signal) {
       const fullPrompt = `${prompt}. ${stylePreset}.`;
+      const pickImage = (data) => {
+        const part = data?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
+        return part?.inlineData?.data && /^image\//.test(part.inlineData.mimeType || 'image/png') ? `data:${part.inlineData.mimeType || 'image/png'};base64,${part.inlineData.data}` : '';
+      };
 
       if (isProviderConfigured('boua')) {
         try {
           const res = await bouaCloudFetch({ mode: 'image', aspectRatio, contents: [{ role: 'user', parts: [{ text: fullPrompt }] }] }, signal);
           let data = null;
-          let imgError = '';
           await readEventStream(res, (json) => {
-            if (json?.error) imgError = json.error.message || 'Erreur image';
-            else data = json;
+            if (!json?.error && !json?.boua) data = json;
           });
-          if (!data && imgError) throw new Error(imgError);
-          const imgPart = data?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
-          if (imgPart?.inlineData?.data && /^image\//.test(imgPart.inlineData.mimeType || 'image/png')) {
-            return `data:${imgPart.inlineData.mimeType || 'image/png'};base64,${imgPart.inlineData.data}`;
-          }
+          const url = pickImage(data);
+          if (url) return { url, kind: 'photo' };
         } catch (e) {
           if (e.name === 'AbortError') throw e;
-          showToast(`Image : ${e.message}`, 'error');
         }
       }
-      if (!(state.apiKeys.gemini || '').trim()) return createProceduralCanvasImage(prompt, aspectRatio, stylePreset);
 
-      try {
-        const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent`;
-        const res = await fetchWithRetry(
-          url,
-          {
-            method: 'POST',
-            headers: geminiHeaders(),
-            body: JSON.stringify({
-              contents: [{ role: 'user', parts: [{ text: fullPrompt }] }],
-              generationConfig: { responseModalities: ['IMAGE'], imageConfig: { aspectRatio } },
-            }),
-            signal,
-          },
-          1
-        );
-        const data = await res.json();
-        const imgPart = data?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData);
-        if (imgPart?.inlineData?.data) {
-          return `data:${imgPart.inlineData.mimeType || 'image/png'};base64,${imgPart.inlineData.data}`;
+      if ((state.apiKeys.gemini || '').trim()) {
+        try {
+          const res = await fetchWithRetry(
+            'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-image:generateContent',
+            {
+              method: 'POST',
+              headers: geminiHeaders(),
+              body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: fullPrompt }] }], generationConfig: { responseModalities: ['IMAGE'], imageConfig: { aspectRatio } } }),
+              signal,
+            },
+            1
+          );
+          const url = pickImage(await res.json());
+          if (url) return { url, kind: 'photo' };
+        } catch (e) {
+          if (e.name === 'AbortError') throw e;
         }
-      } catch (e) {
-        if (e.name === 'AbortError') throw e;
       }
 
-      return createProceduralCanvasImage(prompt, aspectRatio, stylePreset);
+      return { url: await generateSvgIllustration(prompt, aspectRatio, stylePreset, signal), kind: 'vector' };
     }
 
     /**
@@ -4558,6 +4592,8 @@ contenu complet du document
       brainSyncedAt: 0,
     };
 
+    /** Synchronisation cloud réservée aux vrais comptes (les invités restent en local) */
+    const syncOn = () => Boolean(cloud.user && !cloud.user.isAnonymous);
     const inAndroidApp = () => typeof window.AndroidBridge !== 'undefined';
 
     function userRef() {
@@ -4697,13 +4733,13 @@ contenu complet du document
     /** Appelé quand la mémoire, les agents ou les préférences changent */
     function markBrainChanged() {
       localStorage.setItem('boua_ai_brain_updated_v1', String(Date.now()));
-      if (!cloud.user) return;
+      if (!syncOn()) return;
       clearTimeout(cloud.brainTimer);
       cloud.brainTimer = setTimeout(pushBrain, 1500);
     }
 
     async function pushBrain() {
-      if (!cloud.user) return;
+      if (!syncOn()) return;
       try {
         const data = brainToCloud();
         await brainRef().set(data);
@@ -4715,13 +4751,13 @@ contenu complet du document
 
     /* ---------- Synchronisation des discussions ---------- */
     function scheduleCloudPush() {
-      if (!cloud.user) return;
+      if (!syncOn()) return;
       clearTimeout(cloud.pushTimer);
       cloud.pushTimer = setTimeout(pushDirtyChats, 1500);
     }
 
     async function pushDirtyChats() {
-      if (!cloud.user) return;
+      if (!syncOn()) return;
       const dirty = state.chats
         .filter((c) => c.messages.some((m) => !m.isLocal) && !c.messages.some((m) => m.streaming))
         .filter((c) => (Number(c.updatedAt) || 0) > (cloud.synced[c.id] || 0))
@@ -4741,14 +4777,14 @@ contenu complet du document
 
     async function cloudDeleteChat(id) {
       delete cloud.synced[id];
-      if (!cloud.user) return;
+      if (!syncOn()) return;
       try {
         await chatsRef().doc(id).delete();
       } catch (e) {}
     }
 
     async function cloudDeleteAllChats() {
-      if (!cloud.user) return;
+      if (!syncOn()) return;
       try {
         const snap = await chatsRef().get();
         const batch = cloud.db.batch();
@@ -4786,7 +4822,7 @@ contenu complet du document
     }
 
     async function fullSync() {
-      if (!cloud.user) return;
+      if (!syncOn()) return;
       setSyncStatus('syncing');
       try {
         // 1. Discussions distantes → appareil
@@ -4868,27 +4904,30 @@ contenu complet du document
         offline: ['hors ligne', 'bg-amber-500/15 text-amber-300 border-amber-500/30'],
         error: ['erreur', 'bg-red-500/15 text-red-300 border-red-500/30'],
         unavailable: ['local', 'bg-zinc-800 text-zinc-400 border-zinc-700'],
+        guest: ['invité', 'bg-zinc-800 text-amber-300 border-amber-500/30'],
       };
       const [txt, cls] = labels[cloud.status] || labels.local;
       if (badge) {
         badge.textContent = txt;
         badge.className = `text-[10px] font-mono px-1.5 py-0.5 rounded border shrink-0 ${cls}`;
       }
-      if (label) label.textContent = cloud.user ? cloud.user.displayName || cloud.user.email || 'Mon compte' : 'Compte & synchronisation';
-      if (avatar) avatar.textContent = cloud.user ? '👤' : '☁️';
+      const isGuest = Boolean(cloud.user?.isAnonymous);
+      const realUser = cloud.user && !isGuest;
+      if (label) label.textContent = realUser ? cloud.user.displayName || cloud.user.email || 'Mon compte' : isGuest ? 'Invité — créer un compte' : 'Compte & synchronisation';
+      if (avatar) avatar.textContent = realUser ? '👤' : '☁️';
 
       const signedIn = document.getElementById('account-signed-in');
       const signedOut = document.getElementById('account-signed-out');
       if (!signedIn || !signedOut) return;
       document.getElementById('cloud-unavailable').classList.toggle('hidden', cloud.ready);
-      signedOut.classList.toggle('hidden', Boolean(cloud.user) || !cloud.ready);
-      signedIn.classList.toggle('hidden', !cloud.user);
+      signedOut.classList.toggle('hidden', Boolean(realUser) || !cloud.ready);
+      signedIn.classList.toggle('hidden', !realUser);
       // Google interdit la connexion dans les WebView Android → e-mail uniquement dans l'application
       const hideGoogle = inAndroidApp();
       document.getElementById('btn-google-signin').classList.toggle('hidden', hideGoogle);
       document.getElementById('google-divider').classList.toggle('hidden', hideGoogle);
 
-      if (cloud.user) {
+      if (realUser) {
         document.getElementById('account-name').textContent = cloud.user.displayName || 'Compte BOUA AI';
         document.getElementById('account-email').textContent = cloud.user.email || '';
         const photo = document.getElementById('account-photo');
@@ -4918,6 +4957,15 @@ contenu complet du document
         setSyncStatus('local');
         updateEngineBadgesUI();
         if (!state.isLoading) renderMessages();
+        startGuestSession();
+        return;
+      }
+      if (user.isAnonymous) {
+        // Mode invité : BOUA AI répond immédiatement ; les discussions restent sur l'appareil
+        unsubscribeRealtime();
+        setSyncStatus('guest');
+        updateEngineBadgesUI();
+        if (!state.isLoading) renderMessages();
         return;
       }
       setSyncStatus('connecting');
@@ -4926,6 +4974,19 @@ contenu complet du document
       subscribeRealtime();
       updateEngineBadgesUI();
       if (!state.isLoading) renderMessages();
+    }
+
+    let guestAttempted = false;
+    /** Connexion invité automatique (Firebase « Anonyme ») : pas d'inscription obligatoire */
+    function startGuestSession() {
+      if (guestAttempted || !cloud.auth || cloud.user) return;
+      guestAttempted = true;
+      try {
+        Promise.resolve(cloud.auth.signInAnonymously()).catch(() => renderCloudUI());
+      } catch (e) {
+        // Méthode « Anonyme » non activée ou indisponible : l'utilisateur devra se connecter
+        renderCloudUI();
+      }
     }
 
     function initCloud() {
@@ -4946,8 +5007,8 @@ contenu complet du document
         cloud.ready = false;
         cloud.status = 'unavailable';
       }
-      window.addEventListener('online', () => cloud.user && fullSync());
-      window.addEventListener('offline', () => cloud.user && setSyncStatus('offline'));
+      window.addEventListener('online', () => syncOn() && fullSync());
+      window.addEventListener('offline', () => syncOn() && setSyncStatus('offline'));
       renderCloudUI();
     }
 
@@ -5212,7 +5273,7 @@ contenu complet du document
       if (!chat || chat.messages.length === 0) {
         container.innerHTML = `
           <div class="py-4 sm:py-8 text-center space-y-6">
-            <div class="inline-flex flex-wrap items-center justify-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-xs text-zinc-300">
+            <div id="welcome-engines" class="inline-flex flex-wrap items-center justify-center gap-2 px-3.5 py-1.5 rounded-full bg-zinc-900 border border-zinc-800 text-xs text-zinc-300">
               <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
               <span>Gemini • OpenAI • Claude • DeepSeek • Ollama — streaming temps réel</span>
             </div>
@@ -5229,7 +5290,7 @@ contenu complet du document
             </div>
             <p class="text-[11px] text-zinc-500">Astuce : tapez <span class="font-mono text-emerald-300">/</span> pour les commandes rapides (/web, /code, /image, /comparer, /memo…)</p>
 
-            <div class="flex flex-wrap items-center justify-center gap-2">
+            <div id="welcome-demos" class="flex flex-wrap items-center justify-center gap-2">
               <button id="btn-demo-app" type="button" class="px-3.5 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold shadow transition">
                 ${dict.demoAppBtn}
               </button>
@@ -5625,6 +5686,7 @@ contenu complet du document
         document.getElementById('studio-code-editor').value = currentObj.content;
       } else if (state.studioTab === 'video') {
         drawVideoFrame(state.videoElapsed);
+        startVideoStudioLoop();
       } else if (state.studioTab === 'maths') {
         renderMathGraph();
       } else if (state.studioTab === 'doc') {
@@ -5746,97 +5808,6 @@ contenu complet du document
       btn.disabled = !hasContent || state.isLoading;
     }
 
-    function buildSmartLocalFallbackResponse(userText) {
-      const cleanTitle = userText.slice(0, 48).replace(/["<>]/g, '').trim() || 'Application BOUA AI';
-      const wantsCode =
-        state.mode === 'builder' ||
-        /\b(site|web|app|application|android|apk|html|code|landing|boutique|dashboard|projet)\b/i.test(userText);
-
-      if (wantsCode) {
-        const customHtml = [
-          '<!DOCTYPE html>',
-          '<html lang="fr">',
-          '<head>',
-          '  <meta charset="UTF-8" />',
-          '  <meta name="viewport" content="width=device-width, initial-scale=1.0" />',
-          `  <title>${escapeHtml(cleanTitle)}</title>`,
-          '  <' + 'script src="https://cdn.tailwindcss.com"><' + '/script>',
-          '</head>',
-          '<body class="bg-slate-950 text-slate-100 min-h-screen flex flex-col">',
-          '  <header class="px-6 py-5 border-b border-slate-800 bg-slate-900/80 flex items-center justify-between">',
-          '    <div>',
-          '      <span class="text-[11px] font-bold uppercase tracking-wider text-emerald-400">Généré par BOUA AI</span>',
-          `      <h1 class="text-lg font-bold text-white">${escapeHtml(cleanTitle)}</h1>`,
-          '    </div>',
-          '    <span class="px-3 py-1 rounded-full bg-emerald-500/15 border border-emerald-500/35 text-emerald-300 text-xs font-semibold">Web + Android</span>',
-          '  </header>',
-          '  <main class="flex-1 max-w-4xl w-full mx-auto p-6 space-y-6">',
-          '    <section class="p-6 rounded-2xl bg-gradient-to-br from-emerald-950/70 to-slate-900 border border-emerald-500/30 space-y-3">',
-          `      <h2 class="text-2xl font-bold text-white">${escapeHtml(cleanTitle)}</h2>`,
-          '      <p class="text-sm text-slate-300">Application interactive responsive prête pour le déploiement sur GitHub, Vercel, Firebase et Android.</p>',
-          '      <div class="flex gap-2 pt-2">',
-          '        <input id="quick-input" type="text" placeholder="Ajouter un élément..." class="flex-1 bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-emerald-500" />',
-          '        <button id="quick-add" type="button" class="px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-semibold">Ajouter</button>',
-          '      </div>',
-          '    </section>',
-          '    <div id="quick-list" class="grid grid-cols-1 sm:grid-cols-2 gap-3"></div>',
-          '  </main>',
-          '  <' + 'script>',
-          "    const entries = ['Architecture Web & Mobile prête', 'Manifeste PWA & Android configuré'];",
-          "    const listEl = document.getElementById('quick-list');",
-          "    const renderList = () => { listEl.innerHTML = entries.map((t, i) => '<div class=\"p-4 rounded-xl bg-slate-900 border border-slate-800 flex justify-between items-center\"><span class=\"text-sm\">' + t + '</span><button onclick=\"entries.splice(' + i + ',1);renderList()\" class=\"text-xs text-red-400\">Supprimer</button></div>').join(''); };",
-          "    document.getElementById('quick-add').onclick = () => { const inp = document.getElementById('quick-input'); if (inp.value.trim()) { entries.unshift(inp.value.trim()); inp.value = ''; renderList(); } };",
-          '    renderList();',
-          '  <' + '/script>',
-          '</body>',
-          '</html>',
-        ].join('\n');
-
-        return [
-          `Voici votre projet complet **${cleanTitle}** prêt à être prévisualisé et déployé sur **GitHub, Vercel, Firebase et Android** :`,
-          `<file path="index.html">\n${customHtml}\n</file>`,
-          '*(Astuce : ajoutez votre clé API gratuite dans **Multi-Moteurs IA & Clés** pour générer des architectures encore plus personnalisées.)*',
-          '<suggestions>\nAjouter une base de données et un tableau de bord\nAdapter le design pour mobile Android\nTélécharger le pack prêt à déployer (.ZIP)\n</suggestions>',
-        ].join('\n\n');
-      }
-
-      if (state.mode === 'video') {
-        return [
-          `Scénario vidéo généré pour **${cleanTitle}** et chargé dans le Studio Vidéo :`,
-          `<video_storyboard>{"title":"${cleanTitle}","scenes":[{"heading":"${cleanTitle.toUpperCase()}","subtitle":"Présentation dynamique haute définition","style":"waves"},{"heading":"INNOVATION & PERFORMANCE","subtitle":"Conçu avec BOUA AI Studio","style":"grid"},{"heading":"EXPÉRIENCE MULTI-ÉCRANS","subtitle":"Compatible Web, iOS et Android","style":"particles"},{"heading":"PASSEZ À L'ACTION","subtitle":"Exportez votre vidéo .WEBM dès maintenant","style":"orbit"}]}</video_storyboard>`,
-          'Ouvrez l’onglet **Vidéo** du Studio pour lancer la lecture ou exporter en `.WEBM`.',
-        ].join('\n\n');
-      }
-
-      if (state.mode === 'maths') {
-        const exprMatch = userText.match(/([0-9xX+\-*/^().\s]+=[0-9xX+\-*/^().\s]+|[0-9xX+\-*/^().]+)/);
-        const calcVal = exprMatch ? safeEvalMath(exprMatch[1].split('=')[0], 0) : NaN;
-        return [
-          `### Analyse Mathématique — ${cleanTitle}`,
-          !isNaN(calcVal)
-            ? `- **Évaluation numérique :** \`${Number(calcVal.toFixed(8))}\``
-            : '- **Outil interactif :** Vous pouvez tracer n’importe quelle fonction `f(x)` dans l’onglet **Maths** du Studio.',
-          '<graph expr="2*sin(x) + 0.5*x" />',
-        ].join('\n\n');
-      }
-
-      if (state.mode === 'redaction') {
-        return [
-          `Votre document **${cleanTitle}** a été rédigé et ouvert dans l'éditeur **Docs** :`,
-          `<doc title="${cleanTitle}"># ${cleanTitle}\n\n## 1. Objet du document\nCe document présente les spécifications, objectifs et livrables relatifs à : ${userText}.\n\n## 2. Engagements et livrables\n- Conception complète et validation qualité.\n- Livraison prête à l'emploi et support technique.\n\n## 3. Validation\nFait pour servir et valoir ce que de droit.</doc>`,
-        ].join('\n\n');
-      }
-
-      return [
-        `### Réponse BOUA AI`,
-        `J'ai bien analysé votre demande concernant **« ${cleanTitle} »**.`,
-        `- **Mode actif :** ${I18N[state.lang]?.modes[state.mode]?.label || state.mode}`,
-        `- **Configuration :** Pour connecter un modèle Cloud temps réel (**Google Gemini**, **OpenAI ChatGPT**, **Anthropic Claude**, **DeepSeek**) ou **Ollama Local** hors-ligne, cliquez sur **Multi-Moteurs IA & Clés** dans le menu.`,
-        '<suggestions>\nCréer un site web ou une app Android sur ce sujet\nRédiger un document professionnel structuré\nGénérer une vidéo de présentation\n</suggestions>',
-      ].join('\n\n');
-    }
-
-    /** Affichage léger pendant la génération (les fichiers en cours d'écriture sont résumés) */
     function streamingDisplay(content) {
       let t = String(content || '');
       t = t.replace(/<thinking>[\s\S]*?(<\/thinking>|$)/i, (m, end) => (end ? '' : '_🧠 Réflexion en cours…_\n'));
@@ -5934,19 +5905,23 @@ contenu complet du document
 
       try {
         if (state.mode === 'image') {
-          if (!isProviderConfigured('boua') && !(state.apiKeys.gemini || '').trim()) {
+          if (!buildExecutionChain().length && !(state.apiKeys.gemini || '').trim()) {
             chat.messages.push(needLoginMessage());
             return;
           }
           renderMessages();
           const ratio = document.getElementById('image-aspect-ratio')?.value || '1:1';
           const stylePreset = document.getElementById('image-style-preset')?.value || 'Photoréaliste HD';
-          const imgDataUrl = await callGeminiImage(queryText, ratio, stylePreset, signal);
+          const img = await callGeminiImage(queryText, ratio, stylePreset, signal);
           chat.messages.push({
             role: 'assistant',
-            content: `Image générée (${ratio} • ${stylePreset}) :\n<suggestions>\nGénérer une variante en 16:9\nCréer un logo minimaliste assorti\nUtiliser cette image dans un site web\n</suggestions>`,
-            generatedImage: imgDataUrl,
-            engineUsed: 'gemini',
+            content:
+              (img.kind === 'photo'
+                ? `Image générée (${ratio} • ${stylePreset}) :`
+                : `Illustration créée par l'IA (${ratio}). _Le modèle photo n'est pas disponible pour le moment : BOUA AI a dessiné une illustration vectorielle à la place._`) +
+              `\n<suggestions>\nGénérer une variante en 16:9\nCréer un logo minimaliste assorti\nUtiliser cette image dans un site web\n</suggestions>`,
+            generatedImage: img.url,
+            engineUsed: isProviderConfigured('boua') ? 'boua' : 'gemini',
           });
           return;
         }
