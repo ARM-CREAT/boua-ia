@@ -136,6 +136,8 @@ let modelCache = { text: [], image: [], video: [], exp: 0 };
 // Modèles temporairement écartés (quota nul, retirés…) pour aller directement vers un modèle qui répond
 const badModels = new Map(); // nom -> horodatage de fin d'exclusion
 const isBad = (m) => (badModels.get(m) || 0) > Date.now();
+// Dernier modèle ayant répondu : réessayé en premier (réponses plus rapides, moins d'essais inutiles)
+const lastGood = { fast: '', quality: '' };
 const markBad = (m, ms) => badModels.set(m, Date.now() + ms);
 
 function versionOf(name) {
@@ -463,7 +465,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 11, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 12, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -571,6 +573,7 @@ export default async function handler(req) {
     return jsonError(400, e.message, origin);
   }
   const isImage = body.mode === 'image';
+  const speed = body.speed === 'fast' ? 'fast' : 'quality';
   const system = typeof body.systemInstruction === 'string' ? body.systemInstruction.slice(0, 60000) : '';
   const temperature = Math.min(1.2, Math.max(0, Number(body.temperature) || 0.5));
 
@@ -582,7 +585,7 @@ export default async function handler(req) {
     if (system && !isImage) payload.systemInstruction = { parts: [{ text: system }] };
     payload.generationConfig = isImage
       ? { responseModalities: ['TEXT', 'IMAGE'], ...(body.aspectRatio ? { imageConfig: { aspectRatio: String(body.aspectRatio).slice(0, 8) } } : {}) }
-      : { temperature, maxOutputTokens: Math.min(65536, Math.max(1024, Number(body.maxTokens) || 16384)) };
+      : { temperature, maxOutputTokens: Math.min(65536, Math.max(1024, Number(body.maxTokens) || (speed === 'fast' ? 8192 : 16384))) };
     if (withWeb) payload.tools = [{ google_search: {} }];
     const url = isImage ? `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent` : `${GEMINI_BASE}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
     const ctrl = new AbortController();
@@ -636,6 +639,12 @@ export default async function handler(req) {
     const allCandidates = (isImage ? models.image : models.text).slice(0, 8);
     const freshCandidates = allCandidates.filter((m) => !isBad(m));
     candidates = freshCandidates.length ? freshCandidates : allCandidates;
+    if (!isImage) {
+      // VITESSE : questions simples → modèles « Lite » d'abord ; puis le dernier modèle qui a fonctionné en tête
+      if (speed === 'fast') candidates = [...candidates.filter((m) => /lite/.test(m)), ...candidates.filter((m) => !/lite/.test(m))];
+      const good = lastGood[speed];
+      if (good && candidates.includes(good)) candidates = [good, ...candidates.filter((m) => m !== good)];
+    }
   }
 
   /*
@@ -752,6 +761,7 @@ export default async function handler(req) {
                   res = r;
                   model = m;
                   webUsed = wantWeb && r.__web !== false;
+                  if (!isImage) lastGood[speed] = m;
                   break outer;
                 }
                 lastMsg = preMsg || (await readErr(r)) || `HTTP ${r.status}`;
