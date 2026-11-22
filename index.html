@@ -712,6 +712,18 @@
 
           <div id="provider-test-status" class="hidden px-3 py-2 rounded-xl text-[11px] font-mono"></div>
 
+          <div>
+            <label for="settings-cloud-engine" class="block font-semibold text-emerald-300 mb-1.5">Moteur utilisé par BOUA Cloud (clés du serveur)</label>
+            <select id="settings-cloud-engine" class="w-full bg-zinc-900 border border-zinc-700 rounded-xl px-3 py-2 text-xs font-semibold text-white focus:outline-none focus:border-emerald-500">
+              <option value="auto">🔀 Automatique — Gemini (gratuit), puis Claude, ChatGPT, DeepSeek en secours</option>
+              <option value="gemini">✨ Gemini en priorité</option>
+              <option value="claude">🧠 Claude en priorité</option>
+              <option value="openai">🤖 ChatGPT en priorité</option>
+              <option value="deepseek">🐋 DeepSeek en priorité</option>
+            </select>
+            <p id="cloud-engines-status" class="text-[10px] text-zinc-500 mt-1"></p>
+          </div>
+
           <!-- Options Bascule Automatique & Routage Intelligent -->
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-2 border-t border-zinc-800/80">
             <label class="flex items-start gap-2.5 p-2.5 rounded-xl bg-zinc-900/80 border border-zinc-800 cursor-pointer hover:border-emerald-500/40">
@@ -2012,6 +2024,7 @@
       tier: 'complete',
       mode: 'assistant',
       provider: 'boua',
+      cloudEngine: 'auto',
       autoFallback: true,
       smartRouting: true,
       apiKey: '',
@@ -2177,6 +2190,7 @@
         if (settings.ollamaUrl) state.ollamaUrl = settings.ollamaUrl;
 
         // SÉCURITÉ : clés en session uniquement, ou chiffrées dans le coffre-fort
+        if (['auto', 'gemini', 'claude', 'openai', 'deepseek'].includes(settings.cloudEngine)) state.cloudEngine = settings.cloudEngine;
         state.sessionKeys = Boolean(settings.sessionKeys);
         if (state.sessionKeys) {
           try {
@@ -3390,6 +3404,16 @@ contenu complet du document
       });
     }
 
+    let cloudEnginesCache = null;
+    async function fetchCloudEngines() {
+      if (cloudEnginesCache) return cloudEnginesCache;
+      try {
+        const r = await fetch(bouaCloudUrl(), { method: 'GET' });
+        if (r.ok) cloudEnginesCache = (await r.json()).moteurs || null;
+      } catch (e) {}
+      return cloudEnginesCache;
+    }
+
     async function bouaCloudFetch(body, signal) {
       if (!isProviderConfigured('boua')) {
         const e = new Error('Connectez-vous (gratuit) pour que BOUA AI réponde.');
@@ -3417,7 +3441,7 @@ contenu complet du document
     }
 
     /** BOUA Cloud : Gemini via votre serveur Vercel — temps réel + recherche Google, sans clé côté utilisateur */
-    async function callBouaCloud(chatMessages, signal, onDelta) {
+    async function callBouaCloud(chatMessages, signal, onDelta, opts = {}) {
       const res = await bouaCloudFetch(
         {
           contents: toGeminiContents(chatMessages),
@@ -3428,6 +3452,8 @@ contenu complet du document
           query: state.turnContext?.query || '',
           lang: state.lang,
           maxTokens: state.mode === 'builder' ? 32768 : 16384,
+          engine: opts.engine || state.cloudEngine || 'auto',
+          engineOnly: Boolean(opts.engineOnly),
           temperature: state.mode === 'builder' || state.mode === 'maths' ? 0.2 : 0.5,
         },
         signal
@@ -3471,7 +3497,7 @@ contenu complet du document
         }
       });
       if (!text) throw new Error(streamError || 'Réponse vide de BOUA Cloud.');
-      return { rawText: text, sources, webChecked: searched || sources.length > 0, webAttempted: Boolean(meta?.webAvailable), model: meta?.model };
+      return { rawText: text, sources, webChecked: searched || sources.length > 0, webAttempted: Boolean(meta?.webAvailable), model: meta?.model, cloudEngine: meta?.engineLabel || '' };
     }
 
     async function invokeSingleEngine(providerId, chatMessages, signal, onDelta) {
@@ -4462,6 +4488,7 @@ contenu complet du document
         ollamaUrl: state.ollamaUrl,
         customInstructions: state.customInstructions,
         sessionKeys: state.sessionKeys,
+        cloudEngine: state.cloudEngine,
       };
       const keys = { ...state.apiKeys };
       try {
@@ -4636,6 +4663,7 @@ contenu complet du document
           if (m.engineUsed) o.engineUsed = m.engineUsed;
           if (m.isError) o.isError = true;
           if (m.webChecked) o.webChecked = true;
+          if (m.cloudEngine) o.cloudEngine = String(m.cloudEngine).slice(0, 20);
           if (m.timeSensitive) o.timeSensitive = true;
           if (m.generatedImage) o.hadImage = true; // l'image reste sur l'appareil (trop lourde pour le cloud)
           if (Array.isArray(m.sources) && m.sources.length) o.sources = m.sources.slice(0, 12).map((s) => ({ uri: String(s.uri).slice(0, 2000), title: String(s.title).slice(0, 300) }));
@@ -4668,6 +4696,7 @@ contenu complet du document
           if (ENGINE_META[m.engineUsed]) msg.engineUsed = m.engineUsed;
           if (m.isError) msg.isError = true;
           if (m.webChecked) msg.webChecked = true;
+          if (m.cloudEngine) msg.cloudEngine = str(m.cloudEngine, 20);
           if (m.timeSensitive) msg.timeSensitive = true;
           if (Array.isArray(m.sources)) msg.sources = m.sources.filter((s) => /^https?:\/\//i.test(s?.uri || '')).map((s) => ({ uri: str(s.uri, 2000), title: str(s.title, 300) }));
           if (Array.isArray(m.kbSources)) msg.kbSources = m.kbSources.map((x) => str(x, 120));
@@ -5466,7 +5495,7 @@ contenu complet du document
                     <span class="text-xs font-bold text-emerald-400 shrink-0">BOUA AI</span>
                     ${
                       m.engineUsed && ENGINE_META[m.engineUsed]
-                        ? `<span class="text-[10px] font-mono px-2 py-0.5 rounded-md bg-zinc-950 border border-zinc-800 text-amber-300 truncate">${ENGINE_META[m.engineUsed].icon} ${ENGINE_META[m.engineUsed].short}${
+                        ? `<span class="text-[10px] font-mono px-2 py-0.5 rounded-md bg-zinc-950 border border-zinc-800 text-amber-300 truncate">${ENGINE_META[m.engineUsed].icon} ${ENGINE_META[m.engineUsed].short}${m.cloudEngine ? ' · ' + escapeHtml(m.cloudEngine) : ''}${
                             m.fallbackFrom && ENGINE_META[m.fallbackFrom]
                               ? ` (↻ ${ENGINE_META[m.fallbackFrom].short})`
                               : ''
@@ -5928,15 +5957,30 @@ contenu complet du document
 
         if (opts.compare) {
           renderMessages();
-          const engines = ['boua', 'gemini', 'openai', 'claude', 'deepseek', 'ollama'].filter(
-            (p) => isProviderConfigured(p) && (p !== 'ollama' || state.provider === 'ollama')
-          );
-          const results = await Promise.allSettled(engines.map((p) => invokeSingleEngine(p, contextMessages, signal)));
+          // 1) Moteurs du serveur BOUA Cloud (Gemini, Claude, ChatGPT, DeepSeek)
+          const jobs = [];
+          if (isProviderConfigured('boua')) {
+            const m = (await fetchCloudEngines()) || { gemini: true };
+            const label = { gemini: 'Gemini', chatgpt: 'ChatGPT', claude: 'Claude', deepseek: 'DeepSeek' };
+            for (const [k, on] of Object.entries(m)) {
+              if (!on) continue;
+              const engine = k === 'chatgpt' ? 'openai' : k;
+              jobs.push({ engineUsed: 'boua', cloudEngine: label[k], run: () => callBouaCloud(contextMessages, signal, null, { engine, engineOnly: true }) });
+            }
+          }
+          // 2) Moteurs avec vos clés personnelles (réglages)
+          for (const p of ['gemini', 'openai', 'claude', 'deepseek']) {
+            if ((state.apiKeys[p] || '').trim()) jobs.push({ engineUsed: p, run: () => invokeSingleEngine(p, contextMessages, signal) });
+          }
+          if (state.provider === 'ollama') jobs.push({ engineUsed: 'ollama', run: () => invokeSingleEngine('ollama', contextMessages, signal) });
+          const results = await Promise.allSettled(jobs.map((j) => j.run()));
           results.forEach((r, i) => {
+            const j = jobs[i];
+            const name = j.cloudEngine || ENGINE_META[j.engineUsed].name;
             chat.messages.push(
               r.status === 'fulfilled'
-                ? { role: 'assistant', content: r.value.rawText, sources: r.value.sources || [], engineUsed: engines[i] }
-                : { role: 'assistant', content: `⚠️ ${ENGINE_META[engines[i]].name} : ${r.reason?.message || 'échec'}`, engineUsed: engines[i], isError: true }
+                ? { role: 'assistant', content: `**${name}**\n\n` + r.value.rawText, sources: r.value.sources || [], engineUsed: j.engineUsed, cloudEngine: j.cloudEngine }
+                : { role: 'assistant', content: `⚠️ ${name} : ${r.reason?.message || 'échec'}`, engineUsed: j.engineUsed, cloudEngine: j.cloudEngine, isError: true }
             );
           });
           return;
@@ -5976,6 +6020,7 @@ contenu complet du document
         msg.engineUsed = result.engineUsed;
         msg.fallbackFrom = result.fallbackFrom;
         msg.webChecked = Boolean(result.webChecked);
+        if (result.cloudEngine) msg.cloudEngine = result.cloudEngine;
         msg.timeSensitive = Boolean(state.turnContext?.mustSearch);
         if (state.turnContext?.knowledgeSources?.length) msg.kbSources = state.turnContext.knowledgeSources;
         delete msg.streaming;
@@ -6233,6 +6278,14 @@ contenu complet du document
         document.getElementById('model-ollama').value = state.models.ollama || 'qwen2.5-coder:7b';
         document.getElementById('settings-custom-instructions').value = state.customInstructions;
         document.getElementById('settings-session-keys').checked = Boolean(state.sessionKeys);
+        document.getElementById('settings-cloud-engine').value = state.cloudEngine || 'auto';
+        fetchCloudEngines().then((m) => {
+          const el = document.getElementById('cloud-engines-status');
+          if (!el) return;
+          if (!m) return (el.textContent = 'État des moteurs du serveur indisponible.');
+          const names = { gemini: 'Gemini', chatgpt: 'ChatGPT', claude: 'Claude', deepseek: 'DeepSeek' };
+          el.textContent = 'Moteurs actifs sur le serveur : ' + Object.entries(m).map(([k, v]) => `${names[k]} ${v ? '✓' : '✗'}`).join(' · ');
+        });
         document.getElementById('settings-vault-pass').value = '';
         document.getElementById('settings-vault-pass').placeholder = state.vault ? 'Vide = garder le code actuel' : 'Laisser vide = pas de chiffrement';
         updateVaultStatus();
@@ -6266,6 +6319,7 @@ contenu complet du document
         state.ollamaUrl = document.getElementById('url-ollama').value.trim() || 'http://localhost:11434';
         state.customInstructions = document.getElementById('settings-custom-instructions').value.trim().slice(0, 4000);
         state.sessionKeys = document.getElementById('settings-session-keys').checked;
+        state.cloudEngine = document.getElementById('settings-cloud-engine').value || 'auto';
       };
 
       document.getElementById('btn-test-provider').addEventListener('click', async () => {
