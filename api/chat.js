@@ -563,7 +563,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 15, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 16, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -892,11 +892,14 @@ export default async function handler(req) {
       }
 
       /** Transmet un flux Gemini ; ne commence qu'au 1er texte réel. Retourne 'ok', 'bloqué (…)' ou 'réponse vide' */
-      const pipeGemini = async (r, m, webUsed) => {
+      const pipeGemini = async (r, m, webUsed, cont = false) => {
         const reader = r.body.getReader();
         const dec = new TextDecoder();
         let buf = '';
-        let started = false;
+        let started = cont; // en continuation, la méta a déjà été envoyée
+        let gotText = false;
+        let midBlock = '';
+        let sofar = '';
         let block = '';
         const pending = [];
         const handle = async (line) => {
@@ -912,6 +915,24 @@ export default async function handler(req) {
           }
           const cand = j?.candidates?.[0];
           const hasText = (cand?.content?.parts || []).some((p) => p.text && !p.thought && p.text.trim());
+          if (hasText) {
+            gotText = true;
+            sofar += cand.content.parts.filter((p) => p.text && !p.thought).map((p) => p.text).join('');
+          }
+          // Coupure en pleine réponse par le filtre : on ne transmet pas la fin de flux, on complétera ensuite
+          if ((started || hasText) && cand?.finishReason && BLOCK_RE.test(cand.finishReason)) {
+            midBlock = cand.finishReason;
+            if (hasText) {
+              const textOnly = { candidates: [{ content: { role: 'model', parts: cand.content.parts.filter((p) => p.text && !p.thought) } }] };
+              if (!started) {
+                started = true;
+                await send(`: modele ${m}\n\n`);
+                await sendMeta('gemini', m, webUsed);
+              }
+              await send(`data: ${JSON.stringify(textOnly)}\n\n`);
+            }
+            return;
+          }
           if (j?.promptFeedback?.blockReason) block = j.promptFeedback.blockReason;
           if (!started && cand?.finishReason && BLOCK_RE.test(cand.finishReason) && !hasText) block = cand.finishReason;
           if (!started && !hasText) {
@@ -937,7 +958,38 @@ export default async function handler(req) {
           }
         }
         if (buf) await handle(buf);
+        if (midBlock && gotText) return { cut: midBlock, sofar };
+        if (cont) return gotText ? 'ok' : block ? `suite bloquée (${block})` : 'suite vide';
         return started ? 'ok' : block ? `réponse bloquée par le filtre Google (${block})` : 'réponse vide';
+      };
+
+      /** Réponse coupée en plein milieu : on demande la SUITE (formulation neutre) et on la colle à la suite du texte déjà affiché */
+      const finishCutAnswer = async (firstModel, partial) => {
+        let sofar = partial;
+        const models = [firstModel, ...candidates.filter((m) => m !== firstModel)].slice(0, 3);
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const base = attempt === 0 ? contents : pristineContents;
+          const conv = [
+            ...base,
+            { role: 'model', parts: [{ text: sofar.slice(-12000) }] },
+            {
+              role: 'user',
+              parts: [{ text: "Ta réponse précédente a été coupée. Continue EXACTEMENT là où elle s'arrête (si le dernier mot est coupé, termine-le), sans rien répéter ni t'excuser, de manière factuelle, neutre et équilibrée, comme une agence de presse : faits datés, acteurs, enjeux, perspectives. Aucun détail opérationnel violent." }],
+            },
+          ];
+          try {
+            const r = await callOnce(apiKeys[Math.min(attempt, apiKeys.length - 1)], models[attempt % models.length], false, conv);
+            if (!r.ok) continue;
+            const out = await pipeGemini(r, models[attempt % models.length], false, true);
+            if (out === 'ok') return true;
+            if (out && out.cut) {
+              sofar += out.sofar;
+              continue;
+            }
+          } catch (e) {}
+        }
+        await send(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: '\n\n> ⚠️ La suite de cette réponse a été bloquée par le filtre de sécurité de Google. Cliquez sur « Régénérer » ou reformulez la question (ex. : « Résume les dernières actualités du Mali »).' }] } }] })}\n\n`);
+        return true;
       };
 
       let blockedByFilter = false;
@@ -970,6 +1022,10 @@ export default async function handler(req) {
                   const outcome = await pipeGemini(r, m, wantWeb && r.__web !== false);
                   if (outcome === 'ok') {
                     lastGood[speed] = m;
+                    return;
+                  }
+                  if (outcome && outcome.cut) {
+                    await finishCutAnswer(m, outcome.sofar);
                     return;
                   }
                   tried.push(`Gemini ${m} → ${outcome}`);
@@ -1082,6 +1138,10 @@ export default async function handler(req) {
               if (!r.ok) continue;
               const outcome = await pipeGemini(r, m, false);
               if (outcome === 'ok') return;
+              if (outcome && outcome.cut) {
+                await finishCutAnswer(m, outcome.sofar);
+                return;
+              }
               tried.push(`Gemini ${m} (reformulée) → ${outcome}`);
             } catch (e) {}
           }
