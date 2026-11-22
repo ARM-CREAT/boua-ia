@@ -421,6 +421,99 @@ async function searchWikipedia(query, lang) {
   }
 }
 
+/* ---------------- DONNÉES EN TEMPS RÉEL (gratuites, sans clé) ---------------- */
+// Détection rapide : on n'interroge l'IA (extraction) que si ces mots sont présents
+export const REALTIME_RE = /(météo|meteo|temps qu.il fait|température|temperature|pluie|neige|\\bvents?\\b|prévision|tiempo|clima|lluvia|weather|forecast|rain|طقس|taux de change|\\bchanger?\\b|devise|convertir|conversion|euro|dollar|\busd\b|\beur\b|\bgbp\b|cfa|\bxof\b|\bxaf\b|dirham|franc|yen|livre sterling|tipo de cambio|divisa|exchange rate|currency|heure (à|a|en)|quelle heure|qué hora|what time|time in|fuseau)/i;
+
+const WMO = { 0: 'ciel dégagé', 1: 'plutôt dégagé', 2: 'partiellement nuageux', 3: 'couvert', 45: 'brouillard', 48: 'brouillard givrant', 51: 'bruine légère', 53: 'bruine', 55: 'bruine forte', 61: 'pluie faible', 63: 'pluie', 65: 'pluie forte', 66: 'pluie verglaçante', 67: 'pluie verglaçante forte', 71: 'neige faible', 73: 'neige', 75: 'neige forte', 77: 'grains de neige', 80: 'averses faibles', 81: 'averses', 82: 'averses violentes', 85: 'averses de neige', 86: 'fortes averses de neige', 95: 'orage', 96: 'orage avec grêle', 99: 'orage violent avec grêle' };
+// Monnaies à parité fixe avec l'euro (non publiées par la BCE)
+const EUR_PEGS = { XOF: 655.957, XAF: 655.957, KMF: 491.96775 };
+
+async function geocode(city, lang) {
+  const r = await timedFetch(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=${['fr', 'es', 'en', 'ar'].includes(lang) ? lang : 'fr'}&format=json`, 6000);
+  if (!r.ok) return null;
+  const g = (await r.json())?.results?.[0];
+  return g ? { name: g.name, country: g.country || '', lat: g.latitude, lon: g.longitude, tz: g.timezone } : null;
+}
+
+export async function weatherFor(city, lang) {
+  const g = await geocode(city, lang);
+  if (!g) return null;
+  const r = await timedFetch(
+    `https://api.open-meteo.com/v1/forecast?latitude=${g.lat}&longitude=${g.lon}&current=temperature_2m,apparent_temperature,relative_humidity_2m,wind_speed_10m,weather_code&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&forecast_days=4`,
+    7000
+  );
+  if (!r.ok) return null;
+  const d = await r.json();
+  const c = d.current || {};
+  const days = (d.daily?.time || []).map((t, i) => `${t} : ${WMO[d.daily.weather_code[i]] || '—'}, ${Math.round(d.daily.temperature_2m_min[i])}°C / ${Math.round(d.daily.temperature_2m_max[i])}°C, risque de pluie ${d.daily.precipitation_probability_max?.[i] ?? '?'} %`);
+  return {
+    text: `MÉTÉO ${g.name} (${g.country}) — relevé de ${c.time || 'maintenant'} (heure locale) : ${WMO[c.weather_code] || '—'}, ${c.temperature_2m} °C (ressenti ${c.apparent_temperature} °C), humidité ${c.relative_humidity_2m} %, vent ${c.wind_speed_10m} km/h.\nPrévisions :\n- ${days.join('\n- ')}`,
+    source: { uri: `https://open-meteo.com/en/docs#latitude=${g.lat}&longitude=${g.lon}`, title: `Météo ${g.name} — Open-Meteo (${(c.time || '').slice(0, 10)})` },
+  };
+}
+
+export async function currencyFor(from, to, amount) {
+  from = String(from || 'EUR').toUpperCase().slice(0, 3);
+  to = String(to || 'USD').toUpperCase().slice(0, 3);
+  const amt = Number(amount) > 0 ? Number(amount) : 1;
+  // Conversion via l'euro pour gérer les monnaies à parité fixe (FCFA…)
+  const toEurRate = async (code) => {
+    if (code === 'EUR') return { rate: 1, date: '' };
+    if (EUR_PEGS[code]) return { rate: EUR_PEGS[code], date: 'parité fixe' };
+    const r = await timedFetch(`https://api.frankfurter.app/latest?from=EUR&to=${code}`, 6000);
+    if (!r.ok) return null;
+    const j = await r.json();
+    return j?.rates?.[code] ? { rate: j.rates[code], date: j.date } : null;
+  };
+  const [a, b] = await Promise.all([toEurRate(from), toEurRate(to)]);
+  if (!a || !b) return null;
+  const rate = b.rate / a.rate;
+  const date = a.date && a.date !== 'parité fixe' ? a.date : b.date;
+  return {
+    text: `TAUX DE CHANGE (Banque centrale européenne${EUR_PEGS[from] || EUR_PEGS[to] ? ' + parité fixe FCFA/euro' : ''}, ${date}) : 1 ${from} = ${rate.toFixed(6)} ${to} ; ${amt} ${from} = ${(amt * rate).toFixed(2)} ${to}.`,
+    source: { uri: 'https://www.ecb.europa.eu/stats/policy_and_exchange_rates/euro_reference_exchange_rates/html/index.fr.html', title: `Taux de change BCE (${date})` },
+  };
+}
+
+export async function timeFor(city, lang) {
+  const g = await geocode(city, lang);
+  if (!g?.tz) return null;
+  const now = new Date().toLocaleString('fr-FR', { timeZone: g.tz, weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return { text: `HEURE LOCALE à ${g.name} (${g.country}, fuseau ${g.tz}) : ${now}.`, source: null };
+}
+
+/** L'IA (modèle rapide) extrait les demandes de données en temps réel de la question */
+async function extractRealtimeIntents(question, apiKeys, candidates) {
+  const prompt = `Analyse cette question et réponds UNIQUEMENT en JSON : {"meteo":["ville",...],"devise":{"de":"EUR","vers":"USD","montant":1} ou null,"heure":["ville",...]}. Codes ISO 4217 pour les devises (FCFA = XOF). Listes vides si non demandé. Question : « ${question} »`;
+  const lite = [...candidates.filter((m) => /lite/.test(m)), ...candidates.filter((m) => !/lite/.test(m))].slice(0, 3);
+  for (const key of apiKeys.slice(0, 2)) {
+    for (const m of lite) {
+      try {
+        const r = await timedFetch(`${GEMINI_BASE}/models/${encodeURIComponent(m)}:generateContent`, 8000, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0, maxOutputTokens: 200, responseMimeType: 'application/json' } }),
+        });
+        if (!r.ok) continue;
+        const t = ((await r.json())?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
+        return JSON.parse((t.match(/\{[\s\S]*\}/) || ['{}'])[0]);
+      } catch (e) {}
+    }
+  }
+  return null;
+}
+
+export async function fetchRealtimeData(intents, lang) {
+  if (!intents) return [];
+  const jobs = [];
+  for (const c of (Array.isArray(intents.meteo) ? intents.meteo : []).slice(0, 3)) if (typeof c === 'string' && c.trim()) jobs.push(weatherFor(c.trim().slice(0, 80), lang).catch(() => null));
+  const dv = intents.devise;
+  if (dv && typeof dv === 'object' && /^[A-Za-z]{3}$/.test(dv.de || '') && /^[A-Za-z]{3}$/.test(dv.vers || '')) jobs.push(currencyFor(dv.de, dv.vers, dv.montant).catch(() => null));
+  for (const c of (Array.isArray(intents.heure) ? intents.heure : []).slice(0, 3)) if (typeof c === 'string' && c.trim()) jobs.push(timeFor(c.trim().slice(0, 80), lang).catch(() => null));
+  return (await Promise.all(jobs)).filter(Boolean);
+}
+
 /** Image gratuite sans clé (Pollinations) — renvoie { mimeType, data(base64) } ou null */
 async function freeImage(prompt, aspectRatio, seed) {
   const dims = { '1:1': [1024, 1024], '16:9': [1280, 720], '9:16': [720, 1280], '4:3': [1024, 768] }[aspectRatio] || [1024, 1024];
@@ -465,7 +558,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 12, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 13, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -508,6 +601,37 @@ export default async function handler(req) {
     body = JSON.parse(raw);
   } catch (e) {
     return jsonError(400, 'Requête invalide', origin);
+  }
+
+  /* ---------- Transcription vocale (conversation vocale sur Android / navigateurs sans reconnaissance) ---------- */
+  if (body.mode === 'transcribe') {
+    const json = (o, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...corsHeaders(origin) } });
+    const mime = String(body.audio?.mimeType || '').split(';')[0].toLowerCase();
+    const data = String(body.audio?.data || '');
+    if (!/^audio\/(webm|ogg|mp4|mpeg|wav|x-wav|aac|m4a|3gpp|flac)$/.test(mime) || !data || data.length > 6_000_000 || !/^[A-Za-z0-9+/=]+$/.test(data)) return jsonError(400, 'Audio invalide', origin);
+    if (!apiKeys.length) return jsonError(503, 'Transcription indisponible : aucune clé Gemini configurée.', origin);
+    const lang = { fr: 'français', es: 'espagnol', en: 'anglais', ar: 'arabe' }[String(body.lang || 'fr')] || 'français';
+    const models = await resolveModels(apiKey);
+    const list = [...models.text.filter((m) => /flash/.test(m) && !isBad(m))].slice(0, 3);
+    for (const key of apiKeys.slice(0, 4)) {
+      for (const m of list) {
+        try {
+          const r = await timedFetch(`${GEMINI_BASE}/models/${encodeURIComponent(m)}:generateContent`, 15000, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+            body: JSON.stringify({
+              contents: [{ role: 'user', parts: [{ inlineData: { mimeType: mime, data } }, { text: `Transcris exactement ce que dit la personne (langue probable : ${lang}). Réponds uniquement avec la transcription, sans commentaire. Si on n'entend aucune parole, réponds une chaîne vide.` }] }],
+              generationConfig: { temperature: 0, maxOutputTokens: 1024 },
+            }),
+          });
+          if (r.status === 429 || r.status === 403) break; // clé suivante
+          if (!r.ok) continue;
+          const t = ((await r.json())?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('').trim();
+          return json({ text: t.slice(0, 4000), model: m });
+        } catch (e) {}
+      }
+    }
+    return jsonError(502, 'Transcription impossible pour le moment. Réessayez.', origin);
   }
 
   /* ---------- Vidéo réaliste (Veo) : nécessite une clé Google ayant accès à Veo ---------- */
@@ -685,6 +809,24 @@ export default async function handler(req) {
       );
 
     try {
+      /* ---------- Données en temps réel : météo, devises, heure (chiffres exacts + sources) ---------- */
+      if (!isImage && apiKeys.length && candidates.length) {
+        const lastUserRt = [...contents].reverse().find((c) => c.role === 'user');
+        const q = String(body.query || lastUserRt?.parts?.map((p) => p.text || '').join(' ') || '').slice(0, 500);
+        if (REALTIME_RE.test(q)) {
+          await send(`data: ${JSON.stringify({ boua: { progress: 'Consultation des données en temps réel…' } })}\n\n`);
+          const intents = await extractRealtimeIntents(q, apiKeys, candidates);
+          const data = await fetchRealtimeData(intents, String(body.lang || 'fr'));
+          if (data.length && lastUserRt) {
+            lastUserRt.parts = [
+              ...lastUserRt.parts,
+              { text: `\n\n[DONNÉES EN TEMPS RÉEL — valeurs exactes obtenues à l'instant. Utilise CES chiffres (n'en invente aucun) et cite la source :]\n${data.map((d) => d.text).join('\n\n')}` },
+            ];
+            for (const d of data) if (d.source && !webResults.some((w) => w.uri === d.source.uri)) webResults.unshift({ ...d.source, source: '' });
+          }
+        }
+      }
+
       /* ---------- Recherche approfondie : plan → recherches multi-sources → rapport cité ---------- */
       if (body.deep && !isImage) {
         const lastUser = [...contents].reverse().find((c) => c.role === 'user');
