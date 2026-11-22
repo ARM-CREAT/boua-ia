@@ -3529,6 +3529,18 @@ contenu complet du document
       return cloudEnginesCache;
     }
 
+    /** « fast » pour les questions simples (modèle Lite, réponse quasi instantanée), « quality » sinon */
+    function chooseSpeed(chatMessages) {
+      if (state.tier === 'gratuit') return 'fast';
+      if (state.mode !== 'assistant' || state.turnContext?.mustSearch || state.turnContext?.deep) return 'quality';
+      const last = [...chatMessages].reverse().find((m) => m.role === 'user');
+      const text = String(last?.content || '');
+      if ((last?.attachments || []).length) return 'quality';
+      if (text.length > 280) return 'quality';
+      if (/(code|site|app|application|programme|script|html|css|javascript|python|kotlin|analyse|analyser|compare|explique en détail|rapport|plan|stratégie|contrat|calcule|équation|traduis)/i.test(text)) return 'quality';
+      return 'fast';
+    }
+
     async function bouaCloudFetch(body, signal) {
       if (!isProviderConfigured('boua')) {
         const e = new Error('Connectez-vous (gratuit) pour que BOUA AI réponde.');
@@ -3561,7 +3573,9 @@ contenu complet du document
         {
           contents: toGeminiContents(chatMessages),
           systemInstruction: buildSystemInstruction(),
-          web: Boolean(state.webSearchEnabled || state.mode === 'search' || state.turnContext?.forceWeb),
+          // VITESSE : la recherche Google n'est demandée que pour l'actualité ou la recherche approfondie
+          web: Boolean(state.mode === 'search' || state.turnContext?.forceWeb || (state.webSearchEnabled && state.turnContext?.mustSearch)),
+          speed: chooseSpeed(chatMessages),
           mustSearch: Boolean(state.turnContext?.mustSearch),
           alwaysSearch: state.mode === 'search',
           deep: state.mode === 'search' || Boolean(state.turnContext?.deep),
@@ -4183,7 +4197,8 @@ contenu complet du document
     }
 
     function buildContextMessages(messages) {
-      const budget = { gratuit: 30000, pro: 90000, max: 140000, premium: 140000, complete: 180000 }[state.tier] || 120000;
+      // VITESSE : historique raisonnable (plus court = réponse plus rapide) ; plus large pour le code
+      const budget = ({ gratuit: 20000, pro: 60000, max: 90000, premium: 90000, complete: 90000 }[state.tier] || 60000) * (state.mode === 'builder' ? 2 : 1);
       const usable = messages.filter((m) => !m.streaming && !m.isError && !m.isLocal);
       let lastUserIdx = -1;
       usable.forEach((m, i) => {
@@ -4223,7 +4238,7 @@ contenu complet du document
     }
 
     /** Questions dont la réponse change avec le temps : la recherche web devient obligatoire */
-    const TIME_SENSITIVE_RE = /(actualit|aujourd|hier|demain|cette (semaine|année)|récent|dernier|dernière|élection|elecci|election|vote|sondage|encuesta|président|presidente|president|ministre|ministro|gouvernement|gobierno|government|roi |rey |prix|precio|price|tarif|coût|cours|bourse|taux|euribor|inflation|météo|tiempo hace|weather|résultat|resultado|result|score|match|classement|loi |ley |décret|decreto|réglementation|normativa|nouveau|nueva|nuevo|\b20(2[4-9]|3\d)\b|qui est|quién es|who is|quand |cuándo|when |news|noticias|en directo|live)/i;
+    const TIME_SENSITIVE_RE = /(actualit|aujourd|du jour|nouvelles|infos|hier|demain|cette (semaine|année)|récent|dernier|dernière|élection|elecci|election|vote|sondage|encuesta|président|presidente|president|ministre|ministro|gouvernement|gobierno|government|roi |rey |prix|precio|price|tarif|coût|cours|bourse|taux|euribor|inflation|météo|tiempo hace|weather|résultat|resultado|result|score|match|classement|loi |ley |décret|decreto|réglementation|normativa|nouveau|nueva|nuevo|\b20(2[4-9]|3\d)\b|qui est|quién es|who is|quand |cuándo|when |news|noticias|en directo|live)/i;
 
     function prepareTurnContext(queryText, extra = {}) {
       const agent = getActiveAgent();
@@ -6728,6 +6743,9 @@ contenu complet du document
       renderMathGraph();
 
       if (state.vaultLocked) promptVaultUnlock();
+
+      // VITESSE : réveil du serveur BOUA Cloud dès l'ouverture (le 1er message part sans attente)
+      setTimeout(() => fetchCloudEngines().catch(() => {}), 800);
     }
 
     if (document.readyState === 'loading') {
