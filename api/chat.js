@@ -9,7 +9,7 @@
  *
  * Variables d'environnement (Vercel → Settings → Environment Variables) :
  *   GEMINI_API_KEY      (obligatoire) clé créée sur https://aistudio.google.com/apikey
- *   GEMINI_API_KEY_2, GEMINI_API_KEY_3 (facultatif) clés de secours : si une clé atteint son quota, la suivante prend le relais
+ *   GEMINI_API_KEY_2 … GEMINI_API_KEY_10 (facultatif) clés de secours : si une clé atteint son quota, la suivante prend le relais
  *   GEMINI_API_KEYS     (facultatif)  autres clés, séparées par des virgules
  *   OPENAI_API_KEY      (facultatif)  ChatGPT  — aussi accepté : CHATGPT_API_KEY      | OPENAI_MODEL pour forcer un modèle
  *   ANTHROPIC_API_KEY   (facultatif)  Claude   — aussi accepté : CLAUDE_API_KEY       | CLAUDE_MODEL pour forcer un modèle
@@ -132,7 +132,7 @@ function rateLimited(uid, max = RATE_LIMIT_PER_MIN) {
 }
 
 /* ---------------- Choix automatique du modèle Gemini ---------------- */
-let modelCache = { text: [], image: [], exp: 0 };
+let modelCache = { text: [], image: [], video: [], exp: 0 };
 // Modèles temporairement écartés (quota nul, retirés…) pour aller directement vers un modèle qui répond
 const badModels = new Map(); // nom -> horodatage de fin d'exclusion
 const isBad = (m) => (badModels.get(m) || 0) > Date.now();
@@ -162,13 +162,18 @@ export function pickModels(models) {
     ...flash.filter((n) => /preview/.test(n)).sort(byVersion),
   ];
   const images = gen.filter((n) => /^gemini-[\d.]+-flash.*image/.test(n) && !/tts|audio|live/.test(n) && versionOf(n) >= 3);
+  // Vidéo : modèles Veo (méthode predictLongRunning), du plus récent au plus ancien
+  const video = models
+    .filter((m) => /veo/.test(m.name) && (m.supportedGenerationMethods || []).includes('predictLongRunning'))
+    .map((m) => m.name.replace(/^models\//, ''))
+    .sort((a, b) => (parseFloat((b.match(/veo-(\d+(?:\.\d+)?)/) || [])[1]) || 0) - (parseFloat((a.match(/veo-(\d+(?:\.\d+)?)/) || [])[1]) || 0));
   const imageList = [...images.filter((n) => !/preview/.test(n)).sort(byVersion), ...images.filter((n) => /preview/.test(n)).sort(byVersion)];
-  return { text: [...new Set(text)], image: imageList };
+  return { text: [...new Set(text)], image: imageList, video };
 }
 
 async function resolveModels(apiKey, force = false) {
   if (!force && modelCache.text.length && Date.now() < modelCache.exp) return modelCache;
-  let picked = { text: [], image: [] };
+  let picked = { text: [], image: [], video: [] };
   try {
     const res = await fetch(`${GEMINI_BASE}/models?pageSize=1000`, { headers: { 'x-goog-api-key': apiKey } });
     if (res.ok) picked = pickModels((await res.json()).models || []);
@@ -177,8 +182,16 @@ async function resolveModels(apiKey, force = false) {
   const forcedImage = env('GEMINI_IMAGE_MODEL');
   const text = [...new Set([forcedText, ...picked.text, 'gemini-flash-latest', 'gemini-flash-lite-latest'].filter(Boolean))];
   const image = [...new Set([forcedImage, ...picked.image].filter(Boolean))];
-  modelCache = { text, image, exp: Date.now() + 6 * 3600 * 1000 };
+  modelCache = { text, image, video: picked.video || [], exp: Date.now() + 6 * 3600 * 1000 };
   return modelCache;
+}
+
+/** Clés Gemini : GEMINI_API_KEY, GEMINI_API_KEY_2 … GEMINI_API_KEY_10, et GEMINI_API_KEYS (séparées par des virgules) */
+export function geminiKeys() {
+  const names = ['GEMINI_API_KEY', ...Array.from({ length: 9 }, (_, i) => `GEMINI_API_KEY_${i + 2}`)];
+  return [...names.map((n) => env(n)), ...env('GEMINI_API_KEYS').split(',')]
+    .map((k) => String(k || '').trim())
+    .filter((k, i, arr) => k && arr.indexOf(k) === i);
 }
 
 /* ---------------- Moteurs supplémentaires : ChatGPT, Claude, DeepSeek ---------------- */
@@ -190,7 +203,7 @@ export function engineKeys() {
     deepseek: firstEnv('DEEPSEEK_API_KEY', 'DEEPSEEK_KEY'),
   };
 }
-const ENGINE_LABELS = { gemini: 'Gemini', openai: 'ChatGPT', claude: 'Claude', deepseek: 'DeepSeek' };
+const ENGINE_LABELS = { gemini: 'Gemini', openai: 'ChatGPT', claude: 'Claude', deepseek: 'DeepSeek', free: 'Image gratuite' };
 
 const otherModelCache = {}; // moteur -> { model, exp }
 export function pickOpenAIModel(ids) {
@@ -350,6 +363,80 @@ async function searchNews(query, lang) {
   }
 }
 
+/** Résultats web (DuckDuckGo, version HTML sans clé) — au mieux, ignoré en cas d'échec */
+export function parseDuckHtml(html, max = 6) {
+  const out = [];
+  const re = /<a[^>]+class="result__a"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
+  let m;
+  while ((m = re.exec(html)) && out.length < max) {
+    let href = decodeXml(m[1]);
+    const u = href.match(/[?&]uddg=([^&]+)/);
+    if (u) href = decodeURIComponent(u[1]);
+    if (href.startsWith('//')) href = 'https:' + href;
+    if (!/^https?:\/\//.test(href) || /duckduckgo\.com\/y\.js/.test(href)) continue;
+    out.push({ title: decodeXml(m[2]).slice(0, 300), uri: href.slice(0, 2000), snippet: decodeXml(m[3]).slice(0, 500), source: new URL(href).hostname.replace(/^www\./, '') });
+  }
+  return out;
+}
+
+async function timedFetch(url, ms, init = {}) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(url, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function searchWeb(query, lang) {
+  try {
+    const kl = { fr: 'fr-fr', es: 'es-es', en: 'us-en', ar: 'xa-ar' }[lang] || 'fr-fr';
+    const r = await timedFetch(`https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}&kl=${kl}`, 7000, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) BOUA-Cloud', Accept: 'text/html' },
+    });
+    return r.ok ? parseDuckHtml(await r.text()) : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+async function searchWikipedia(query, lang) {
+  const wl = ['fr', 'es', 'en', 'ar'].includes(lang) ? lang : 'fr';
+  try {
+    const r = await timedFetch(
+      `https://${wl}.wikipedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrlimit=2&prop=extracts|info&exintro=1&explaintext=1&exchars=1200&inprop=url&format=json&origin=*`,
+      6000,
+      { headers: { 'User-Agent': 'BOUA-Cloud/1.0 (assistant IA)' } }
+    );
+    if (!r.ok) return [];
+    const pages = Object.values((await r.json())?.query?.pages || {});
+    return pages
+      .filter((pg) => pg.extract && pg.fullurl)
+      .map((pg) => ({ title: `${pg.title} — Wikipédia`, uri: pg.fullurl, snippet: pg.extract.slice(0, 1200), source: 'Wikipédia' }));
+  } catch (e) {
+    return [];
+  }
+}
+
+/** Image gratuite sans clé (Pollinations) — renvoie { mimeType, data(base64) } ou null */
+async function freeImage(prompt, aspectRatio, seed) {
+  const dims = { '1:1': [1024, 1024], '16:9': [1280, 720], '9:16': [720, 1280], '4:3': [1024, 768] }[aspectRatio] || [1024, 1024];
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(String(prompt).slice(0, 800))}?width=${dims[0]}&height=${dims[1]}&nologo=true&safe=true&seed=${seed || Math.floor(Math.random() * 1e6)}`;
+  try {
+    const r = await timedFetch(url, 70000, { headers: { 'User-Agent': 'BOUA-Cloud/1.0' } });
+    const type = (r.headers.get('content-type') || '').split(';')[0];
+    if (!r.ok || !/^image\/(png|jpeg|webp)$/.test(type)) return null;
+    const buf = new Uint8Array(await r.arrayBuffer());
+    if (buf.length < 2000 || buf.length > 6 * 1024 * 1024) return null;
+    let bin = '';
+    for (let i = 0; i < buf.length; i += 0x8000) bin += String.fromCharCode.apply(null, buf.subarray(i, i + 0x8000));
+    return { mimeType: type, data: btoa(bin) };
+  } catch (e) {
+    return null;
+  }
+}
+
 /* ---------------- Validation de la requête ---------------- */
 function sanitizeContents(contents) {
   if (!Array.isArray(contents) || contents.length === 0 || contents.length > MAX_CONTENTS) throw new Error('Conversation invalide');
@@ -372,11 +459,11 @@ export default async function handler(req) {
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders(origin) });
   if (req.method === 'GET') {
     // Diagnostic sans secret : https://boua-ia.vercel.app/api/chat
-    const keys = [env('GEMINI_API_KEY'), env('GEMINI_API_KEY_2'), env('GEMINI_API_KEY_3'), ...env('GEMINI_API_KEYS').split(',')].map((x) => x.trim()).filter(Boolean);
+    const keys = geminiKeys();
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 9, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 11, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -384,9 +471,7 @@ export default async function handler(req) {
   if (req.headers.get('origin') && !origin) return jsonError(403, 'Origine non autorisée', '');
 
   // Clés Gemini du serveur (rotation automatique si une clé atteint son quota)
-  const apiKeys = [env('GEMINI_API_KEY'), env('GEMINI_API_KEY_2'), env('GEMINI_API_KEY_3'), ...env('GEMINI_API_KEYS').split(',')]
-    .map((k) => k.trim())
-    .filter((k, i, arr) => k && arr.indexOf(k) === i);
+  const apiKeys = geminiKeys();
   const apiKey = apiKeys[0];
   const otherKeys = engineKeys();
   if (!apiKey && !otherKeys.openai && !otherKeys.claude && !otherKeys.deepseek) return jsonError(503, 'BOUA Cloud non configuré : ajoutez GEMINI_API_KEY dans Vercel (Settings → Environment Variables), puis redéployez.', origin);
@@ -421,6 +506,62 @@ export default async function handler(req) {
     body = JSON.parse(raw);
   } catch (e) {
     return jsonError(400, 'Requête invalide', origin);
+  }
+
+  /* ---------- Vidéo réaliste (Veo) : nécessite une clé Google ayant accès à Veo ---------- */
+  if (body.mode === 'video-start' || body.mode === 'video-status' || body.mode === 'video-file') {
+    if (!apiKeys.length) return jsonError(503, 'Vidéo réaliste indisponible : aucune clé Gemini configurée.', origin);
+    const json = (o, st = 200) => new Response(JSON.stringify(o), { status: st, headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...corsHeaders(origin) } });
+    const keyIdx = Math.min(apiKeys.length - 1, Math.max(0, Number(body.keyIndex) || 0));
+    const errText = async (r) => {
+      try {
+        return String((await r.json())?.error?.message || '').slice(0, 300);
+      } catch (e) {
+        return '';
+      }
+    };
+
+    if (body.mode === 'video-start') {
+      const prompt = String(body.prompt || '').trim().slice(0, 1500);
+      if (!prompt) return jsonError(400, 'Description de la vidéo manquante.', origin);
+      const vids = (await resolveModels(apiKey)).video || [];
+      if (!vids.length) {
+        return jsonError(403, 'Vidéo réaliste (Veo) non disponible avec vos clés Google : cette fonction demande en général l’offre payante de Google AI Studio. Le Studio Vidéo crée à la place une vidéo animée avec des images IA.', origin);
+      }
+      let last = '';
+      for (let k = 0; k < apiKeys.length; k++) {
+        for (const vm of vids.slice(0, 3)) {
+          const r = await timedFetch(`${GEMINI_BASE}/models/${encodeURIComponent(vm)}:predictLongRunning`, 20000, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'x-goog-api-key': apiKeys[k] },
+            body: JSON.stringify({ instances: [{ prompt }], parameters: { aspectRatio: body.aspectRatio === '9:16' ? '9:16' : '16:9' } }),
+          }).catch((e) => null);
+          if (r && r.ok) {
+            const op = await r.json();
+            if (op?.name) return json({ operation: op.name, keyIndex: k, model: vm });
+          }
+          last = r ? (await errText(r)) || `HTTP ${r.status}` : 'délai dépassé';
+        }
+      }
+      return jsonError(402, `Veo a refusé la génération (souvent : offre payante requise ou quota épuisé). Détail : ${last}`, origin);
+    }
+
+    const op = String(body.operation || '');
+    if (!/^models\/[\w.-]+\/operations\/[\w-]+$/.test(op)) return jsonError(400, 'Opération vidéo invalide.', origin);
+    const st = await timedFetch(`${GEMINI_BASE}/${op}`, 15000, { headers: { 'x-goog-api-key': apiKeys[keyIdx] } }).catch(() => null);
+    if (!st || !st.ok) return jsonError(502, 'Suivi de la vidéo impossible pour le moment.', origin);
+    const data = await st.json();
+    if (data.error) return jsonError(502, `Génération vidéo échouée : ${String(data.error.message || '').slice(0, 300)}`, origin);
+    if (!data.done) return json({ done: false });
+    const resp = data.response || {};
+    const uri = resp.generateVideoResponse?.generatedSamples?.[0]?.video?.uri || resp.generatedVideos?.[0]?.video?.uri || resp.videos?.[0]?.uri || '';
+    if (!uri) return jsonError(502, 'Vidéo terminée mais introuvable (contenu peut-être filtré par Google).', origin);
+    if (body.mode === 'video-status') return json({ done: true });
+    // SÉCURITÉ : téléchargement uniquement depuis les serveurs Google, avec la clé côté serveur
+    if (!/^https:\/\/generativelanguage\.googleapis\.com\//.test(uri)) return jsonError(400, 'Adresse vidéo non autorisée.', origin);
+    const file = await fetch(uri, { headers: { 'x-goog-api-key': apiKeys[keyIdx] }, redirect: 'follow' });
+    if (!file.ok) return jsonError(502, 'Téléchargement de la vidéo impossible.', origin);
+    return new Response(file.body, { status: 200, headers: { 'Content-Type': 'video/mp4', 'Cache-Control': 'no-store', ...corsHeaders(origin) } });
   }
 
   let contents;
@@ -486,8 +627,8 @@ export default async function handler(req) {
   const wanted = String(body.engine || 'auto').toLowerCase().replace('chatgpt', 'openai');
   let order = (wanted in configured ? [wanted, ...baseOrder.filter((x) => x !== wanted)] : baseOrder).filter((e) => configured[e]);
   if (body.engineOnly && wanted in configured) order = configured[wanted] ? [wanted] : []; // mode /comparer : un seul moteur
-  if (isImage) order = order.filter((e) => e === 'gemini'); // seule la génération d'image Gemini est prise en charge
-  if (!order.length) return jsonError(503, isImage ? 'Génération d’image indisponible (aucune clé Gemini).' : `Moteur ${ENGINE_LABELS[wanted] || wanted} non configuré sur le serveur.`, origin);
+  if (isImage) order = body.fast ? [] : order.filter((e) => e === 'gemini'); // images : Gemini puis service gratuit
+  if (!order.length && !isImage) return jsonError(503, `Moteur ${ENGINE_LABELS[wanted] || wanted} non configuré sur le serveur.`, origin);
 
   let candidates = [];
   if (configured.gemini) {
@@ -535,6 +676,59 @@ export default async function handler(req) {
       );
 
     try {
+      /* ---------- Recherche approfondie : plan → recherches multi-sources → rapport cité ---------- */
+      if (body.deep && !isImage) {
+        const lastUser = [...contents].reverse().find((c) => c.role === 'user');
+        const question = String(body.query || lastUser?.parts?.map((p) => p.text || '').join(' ') || '').slice(0, 500);
+        const lang = String(body.lang || 'fr');
+        await send(`data: ${JSON.stringify({ boua: { progress: 'Préparation du plan de recherche…' } })}\n\n`);
+        let subQueries = [];
+        if (apiKeys.length && candidates.length) {
+          const planPrompt = `Découpe cette demande en 3 à 5 requêtes de recherche web courtes et complémentaires (mots-clés, dans la langue la plus pertinente). Date du jour : ${new Date().toISOString().slice(0, 10)}. Demande : « ${question} ». Réponds uniquement par un tableau JSON de chaînes.`;
+          outerPlan: for (const key of apiKeys.slice(0, 2)) {
+            for (const m of candidates.slice(0, 4)) {
+              try {
+                const r = await timedFetch(`${GEMINI_BASE}/models/${encodeURIComponent(m)}:generateContent`, 15000, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
+                  body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: planPrompt }] }], generationConfig: { temperature: 0.2, maxOutputTokens: 400 } }),
+                });
+                if (!r.ok) continue;
+                const t = ((await r.json())?.candidates?.[0]?.content?.parts || []).map((p) => p.text || '').join('');
+                const arr = JSON.parse((t.match(/\[[\s\S]*\]/) || ['[]'])[0]);
+                subQueries = arr.filter((x) => typeof x === 'string' && x.trim()).map((x) => x.trim().slice(0, 150)).slice(0, 5);
+                if (subQueries.length) break outerPlan;
+              } catch (e) {}
+            }
+          }
+        }
+        if (!subQueries.length) subQueries = [question.slice(0, 150)];
+        await send(`data: ${JSON.stringify({ boua: { progress: `Recherche en cours : ${subQueries.join(' · ')}` } })}\n\n`);
+        const batches = await Promise.all(
+          subQueries.map(async (q, i) => {
+            const [news, web, wiki] = await Promise.all([searchNews(q, lang), searchWeb(q, lang), i < 2 ? searchWikipedia(q, lang) : Promise.resolve([])]);
+            return [...news.slice(0, 4), ...web.slice(0, 4), ...wiki];
+          })
+        );
+        const seenUri = new Set(webResults.map((r) => r.uri));
+        for (const r of batches.flat()) {
+          if (r && r.uri && !seenUri.has(r.uri) && webResults.length < 24) {
+            seenUri.add(r.uri);
+            webResults.push(r);
+          }
+        }
+        await send(`data: ${JSON.stringify({ boua: { progress: `${webResults.length} sources trouvées — rédaction du rapport…` } })}\n\n`);
+        if (lastUser && webResults.length) {
+          const today = new Date().toISOString().slice(0, 10);
+          const block =
+            `\n\n[RECHERCHE APPROFONDIE — ${webResults.length} sources réelles consultées le ${today}. Rédige un rapport complet et structuré (résumé, analyse détaillée par thème, points de vigilance, conclusion). Cite chaque affirmation avec le numéro de la source entre crochets, ex. [3]. Signale les contradictions entre sources. Termine par une section « Sources » listant les numéros utilisés.]\n` +
+            webResults
+              .map((r, i) => `[${i + 1}] ${r.title}${r.source ? ` — ${r.source}` : ''}${r.date ? ` (${r.date})` : ''}${r.snippet ? `\n    ${r.snippet}` : ''}`)
+              .join('\n');
+          lastUser.parts = [...lastUser.parts, { text: block }];
+        }
+      }
+
       for (const engine of order) {
         /* ---------- Gemini : clés × modèles ---------- */
         if (engine === 'gemini') {
@@ -645,6 +839,18 @@ export default async function handler(req) {
           lastMsg = e.message || lastMsg;
           tried.push(`${ENGINE_LABELS[engine]} ${model} → ${lastMsg.slice(0, 80)}`);
         }
+      }
+
+      // Images : service gratuit en secours (ou directement en mode « fast »)
+      if (isImage) {
+        const promptText = contents[contents.length - 1]?.parts?.map((p) => p.text || '').join(' ') || '';
+        const img = await freeImage(promptText, body.aspectRatio, body.seed);
+        if (img) {
+          await sendMeta('free', 'pollinations', false);
+          await send(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ inlineData: img }] } }] })}\n\n`);
+          return;
+        }
+        tried.push('Image gratuite → indisponible');
       }
 
       // Tous les moteurs ont échoué
