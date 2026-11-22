@@ -423,7 +423,8 @@ async function searchWikipedia(query, lang) {
 
 /* ---------------- DONNÉES EN TEMPS RÉEL (gratuites, sans clé) ---------------- */
 // Détection rapide : on n'interroge l'IA (extraction) que si ces mots sont présents
-export const REALTIME_RE = /(météo|meteo|temps qu.il fait|température|temperature|pluie|neige|\\bvents?\\b|prévision|tiempo|clima|lluvia|weather|forecast|rain|طقس|taux de change|\\bchanger?\\b|devise|convertir|conversion|euro|dollar|\busd\b|\beur\b|\bgbp\b|cfa|\bxof\b|\bxaf\b|dirham|franc|yen|livre sterling|tipo de cambio|divisa|exchange rate|currency|heure (à|a|en)|quelle heure|qué hora|what time|time in|fuseau)/i;
+export const REALTIME_RE = new RegExp(String.raw`(m[ée]t[ée]o|temps qu.il fait|quel temps|temp[ée]rature (à|a|en|au|de|aujourd)|pr[ée]visions? (météo|du temps|pour)|\bil (pleut|neige)\b|\bpluie\b|\bclima\b|qu[ée] tiempo|el tiempo (en|hoy|mañana|para)|\blluvia|weather|forecast|طقس|taux de change|tipo de cambio|exchange rate|cours (de l.|du) ?(euro|dollar|franc|dirham|yen|livre)|\bdevises?\b|\bdivisas?\b|currency|(convertir|conversion|combien (font|fait|vaut|valent)|cu[áa]nto (es|son|vale)n?|how much is)[^.?!
+]{0,40}(€|\$|euros?|dollars?|fcfa|f ?cfa|cfa|xof|xaf|usd|eur|gbp|dirhams?|yens?|yuans?|livres? sterling|francs? (cfa|suisses?)|pesos?|nairas?|cedis?)\b|\b\d[\d\s.,]*\s?(€|\$|euros?|dollars?|fcfa|f ?cfa|cfa|xof|xaf|usd|eur|gbp|dirhams?|yens?|yuans?|livres? sterling|francs? (cfa|suisses?)|pesos?|nairas?|cedis?)\s+(en|à|a|in|to|vers)\s+(€|\$|euros?|dollars?|fcfa|f ?cfa|cfa|xof|xaf|usd|eur|gbp|dirhams?|yens?|yuans?|livres? sterling|francs? (cfa|suisses?)|pesos?|nairas?|cedis?)\b|quelle heure|qu.elle heure est|heure (actuelle|locale)|qu[ée] hora|what time|fuseau horaire)`, 'i');
 
 const WMO = { 0: 'ciel dégagé', 1: 'plutôt dégagé', 2: 'partiellement nuageux', 3: 'couvert', 45: 'brouillard', 48: 'brouillard givrant', 51: 'bruine légère', 53: 'bruine', 55: 'bruine forte', 61: 'pluie faible', 63: 'pluie', 65: 'pluie forte', 66: 'pluie verglaçante', 67: 'pluie verglaçante forte', 71: 'neige faible', 73: 'neige', 75: 'neige forte', 77: 'grains de neige', 80: 'averses faibles', 81: 'averses', 82: 'averses violentes', 85: 'averses de neige', 86: 'fortes averses de neige', 95: 'orage', 96: 'orage avec grêle', 99: 'orage violent avec grêle' };
 // Monnaies à parité fixe avec l'euro (non publiées par la BCE)
@@ -486,11 +487,11 @@ export async function timeFor(city, lang) {
 /** L'IA (modèle rapide) extrait les demandes de données en temps réel de la question */
 async function extractRealtimeIntents(question, apiKeys, candidates) {
   const prompt = `Analyse cette question et réponds UNIQUEMENT en JSON : {"meteo":["ville",...],"devise":{"de":"EUR","vers":"USD","montant":1} ou null,"heure":["ville",...]}. Codes ISO 4217 pour les devises (FCFA = XOF). Listes vides si non demandé. Question : « ${question} »`;
-  const lite = [...candidates.filter((m) => /lite/.test(m)), ...candidates.filter((m) => !/lite/.test(m))].slice(0, 3);
-  for (const key of apiKeys.slice(0, 2)) {
+  const lite = [...candidates.filter((m) => /lite/.test(m)), ...candidates.filter((m) => !/lite/.test(m))].slice(0, 2);
+  for (const key of apiKeys.slice(0, 1)) {
     for (const m of lite) {
       try {
-        const r = await timedFetch(`${GEMINI_BASE}/models/${encodeURIComponent(m)}:generateContent`, 8000, {
+        const r = await timedFetch(`${GEMINI_BASE}/models/${encodeURIComponent(m)}:generateContent`, 3500, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key },
           body: JSON.stringify({ contents: [{ role: 'user', parts: [{ text: prompt }] }], generationConfig: { temperature: 0, maxOutputTokens: 200, responseMimeType: 'application/json' } }),
@@ -558,7 +559,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 13, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 14, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -815,8 +816,11 @@ export default async function handler(req) {
         const q = String(body.query || lastUserRt?.parts?.map((p) => p.text || '').join(' ') || '').slice(0, 500);
         if (REALTIME_RE.test(q)) {
           await send(`data: ${JSON.stringify({ boua: { progress: 'Consultation des données en temps réel…' } })}\n\n`);
-          const intents = await extractRealtimeIntents(q, apiKeys, candidates);
-          const data = await fetchRealtimeData(intents, String(body.lang || 'fr'));
+          // Limite stricte : jamais plus de 5 s d'attente avant que la réponse commence
+          const data = await Promise.race([
+            extractRealtimeIntents(q, apiKeys, candidates).then((intents) => fetchRealtimeData(intents, String(body.lang || 'fr'))),
+            new Promise((r) => setTimeout(() => r([]), 5000)),
+          ]).catch(() => []);
           if (data.length && lastUserRt) {
             lastUserRt.parts = [
               ...lastUserRt.parts,
