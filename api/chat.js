@@ -11,6 +11,10 @@
  *   GEMINI_API_KEY      (obligatoire) clé créée sur https://aistudio.google.com/apikey
  *   GEMINI_API_KEY_2, GEMINI_API_KEY_3 (facultatif) clés de secours : si une clé atteint son quota, la suivante prend le relais
  *   GEMINI_API_KEYS     (facultatif)  autres clés, séparées par des virgules
+ *   OPENAI_API_KEY      (facultatif)  ChatGPT  — aussi accepté : CHATGPT_API_KEY      | OPENAI_MODEL pour forcer un modèle
+ *   ANTHROPIC_API_KEY   (facultatif)  Claude   — aussi accepté : CLAUDE_API_KEY       | CLAUDE_MODEL pour forcer un modèle
+ *   DEEPSEEK_API_KEY    (facultatif)  DeepSeek                                     | DEEPSEEK_MODEL pour forcer un modèle
+ *   BOUA_ENGINE_ORDER   (facultatif)  ordre des moteurs, ex. « gemini,claude,openai,deepseek » (par défaut)
  *   GEMINI_MODEL        (facultatif)  forcer un modèle texte précis
  *   GEMINI_IMAGE_MODEL  (facultatif)  forcer un modèle d'image précis
  *   FIREBASE_PROJECT_ID (facultatif)  par défaut : boui-ia
@@ -177,6 +181,115 @@ async function resolveModels(apiKey, force = false) {
   return modelCache;
 }
 
+/* ---------------- Moteurs supplémentaires : ChatGPT, Claude, DeepSeek ---------------- */
+const firstEnv = (...names) => names.map((n) => env(n).trim()).find(Boolean) || '';
+export function engineKeys() {
+  return {
+    openai: firstEnv('OPENAI_API_KEY', 'CHATGPT_API_KEY', 'OPENAI_KEY', 'CHATGPT_KEY'),
+    claude: firstEnv('ANTHROPIC_API_KEY', 'CLAUDE_API_KEY', 'ANTHROPIC_KEY', 'CLAUDE_KEY'),
+    deepseek: firstEnv('DEEPSEEK_API_KEY', 'DEEPSEEK_KEY'),
+  };
+}
+const ENGINE_LABELS = { gemini: 'Gemini', openai: 'ChatGPT', claude: 'Claude', deepseek: 'DeepSeek' };
+
+const otherModelCache = {}; // moteur -> { model, exp }
+export function pickOpenAIModel(ids) {
+  const re = /^gpt-(\d+(?:\.\d+)?)(-mini)?$/;
+  const list = ids.map((id) => ({ id, m: id.match(re) })).filter((x) => x.m);
+  // Récent + économique : la version « mini » la plus récente, sinon la version standard la plus récente
+  list.sort((a, b) => parseFloat(b.m[1]) - parseFloat(a.m[1]) || (b.m[2] ? 1 : 0) - (a.m[2] ? 1 : 0));
+  return list[0]?.id || 'gpt-4o-mini';
+}
+export function pickClaudeModel(models) {
+  // La liste Anthropic est triée du plus récent au plus ancien : on prend le Sonnet le plus récent
+  const ids = models.map((m) => m.id || '');
+  return ids.find((id) => /sonnet/.test(id)) || ids[0] || 'claude-sonnet-4-5';
+}
+async function resolveOtherModel(engine, key) {
+  const forced = { openai: env('OPENAI_MODEL'), claude: env('CLAUDE_MODEL'), deepseek: env('DEEPSEEK_MODEL') }[engine];
+  if (forced) return forced;
+  const c = otherModelCache[engine];
+  if (c && Date.now() < c.exp) return c.model;
+  let model = { openai: 'gpt-4o-mini', claude: 'claude-sonnet-4-5', deepseek: 'deepseek-chat' }[engine];
+  try {
+    if (engine === 'openai') {
+      const r = await fetch('https://api.openai.com/v1/models', { headers: { Authorization: `Bearer ${key}` } });
+      if (r.ok) model = pickOpenAIModel(((await r.json()).data || []).map((m) => m.id));
+    } else if (engine === 'claude') {
+      const r = await fetch('https://api.anthropic.com/v1/models?limit=100', { headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01' } });
+      if (r.ok) model = pickClaudeModel((await r.json()).data || []);
+    }
+  } catch (e) {}
+  otherModelCache[engine] = { model, exp: Date.now() + 6 * 3600 * 1000 };
+  return model;
+}
+
+/** Conversation (format Gemini) → format ChatGPT / DeepSeek */
+export function toOpenAIMessages(contents, system, vision) {
+  const msgs = system ? [{ role: 'system', content: system }] : [];
+  for (const c of contents) {
+    const role = c.role === 'model' ? 'assistant' : 'user';
+    const text = c.parts.filter((p) => typeof p.text === 'string').map((p) => p.text).join('\n') || ' ';
+    const imgs = c.parts.filter((p) => p.inlineData);
+    if (vision && role === 'user' && imgs.length) {
+      msgs.push({ role, content: [{ type: 'text', text }, ...imgs.map((p) => ({ type: 'image_url', image_url: { url: `data:${p.inlineData.mimeType};base64,${p.inlineData.data}` } }))] });
+    } else msgs.push({ role, content: text });
+  }
+  return msgs;
+}
+/** Conversation (format Gemini) → format Claude */
+export function toClaudeMessages(contents) {
+  const out = [];
+  for (const c of contents) {
+    const role = c.role === 'model' ? 'assistant' : 'user';
+    const blocks = [];
+    for (const p of c.parts) {
+      if (p.inlineData && /^image\/(png|jpeg|gif|webp)$/.test(p.inlineData.mimeType)) blocks.push({ type: 'image', source: { type: 'base64', media_type: p.inlineData.mimeType, data: p.inlineData.data } });
+      else if (typeof p.text === 'string' && p.text) blocks.push({ type: 'text', text: p.text });
+    }
+    if (!blocks.length) blocks.push({ type: 'text', text: ' ' });
+    const prev = out[out.length - 1];
+    if (prev && prev.role === role) prev.content.push(...blocks); // Claude exige l'alternance des rôles
+    else out.push({ role, content: blocks });
+  }
+  while (out.length && out[0].role !== 'user') out.shift();
+  return out;
+}
+
+/** Lance un moteur non-Gemini en streaming ; renvoie la réponse HTTP */
+async function callOtherEngine(engine, key, model, contents, system, opts) {
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs || 25000);
+  try {
+    if (engine === 'claude') {
+      return await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model, system: system || undefined, messages: toClaudeMessages(contents), max_tokens: Math.min(32000, Number(opts.maxTokens) || 16000), stream: true }),
+        signal: ctrl.signal,
+      });
+    }
+    const url = engine === 'openai' ? 'https://api.openai.com/v1/chat/completions' : 'https://api.deepseek.com/chat/completions';
+    return await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
+      body: JSON.stringify({ model, messages: toOpenAIMessages(contents, system, engine === 'openai'), stream: true }),
+      signal: ctrl.signal,
+    });
+  } catch (e) {
+    if (e.name === 'AbortError') return new Response(JSON.stringify({ error: { message: `${ENGINE_LABELS[engine]} trop lent (délai dépassé)` } }), { status: 504 });
+    throw e;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Extrait le texte d'un événement de flux ChatGPT / DeepSeek / Claude */
+export function otherStreamText(engine, json) {
+  if (engine === 'claude') return json?.type === 'content_block_delta' && json.delta?.type === 'text_delta' ? json.delta.text || '' : '';
+  return json?.choices?.[0]?.delta?.content || '';
+}
+
 /* ---------------- Recherche web propre à BOUA Cloud (Google Actualités, gratuit, sans clé) ---------------- */
 const NEWS_LOCALES = { fr: ['fr', 'FR'], es: ['es', 'ES'], en: ['en', 'US'], ar: ['ar', 'EG'] };
 
@@ -261,7 +374,9 @@ export default async function handler(req) {
     // Diagnostic sans secret : https://boua-ia.vercel.app/api/chat
     const keys = [env('GEMINI_API_KEY'), env('GEMINI_API_KEY_2'), env('GEMINI_API_KEY_3'), ...env('GEMINI_API_KEYS').split(',')].map((x) => x.trim()).filter(Boolean);
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 8, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
+    const ok = engineKeys();
+    const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 9, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -273,7 +388,8 @@ export default async function handler(req) {
     .map((k) => k.trim())
     .filter((k, i, arr) => k && arr.indexOf(k) === i);
   const apiKey = apiKeys[0];
-  if (!apiKey) return jsonError(503, 'BOUA Cloud non configuré : ajoutez GEMINI_API_KEY dans Vercel (Settings → Environment Variables), puis redéployez.', origin);
+  const otherKeys = engineKeys();
+  if (!apiKey && !otherKeys.openai && !otherKeys.claude && !otherKeys.deepseek) return jsonError(503, 'BOUA Cloud non configuré : ajoutez GEMINI_API_KEY dans Vercel (Settings → Environment Variables), puis redéployez.', origin);
 
   // 1. Authentification
   const auth = req.headers.get('authorization') || '';
@@ -364,98 +480,52 @@ export default async function handler(req) {
     }
   }
 
-  const models = await resolveModels(apiKey);
-  const allCandidates = (isImage ? models.image : models.text).slice(0, 8);
-  const freshCandidates = allCandidates.filter((m) => !isBad(m));
-  const candidates = freshCandidates.length ? freshCandidates : allCandidates;
-  if (!candidates.length) return jsonError(503, 'Aucun modèle Gemini disponible pour cette clé.', origin);
+  // Ordre des moteurs : préférence de l'utilisateur, sinon Gemini (gratuit) puis les autres en secours
+  const configured = { gemini: apiKeys.length > 0, claude: Boolean(otherKeys.claude), openai: Boolean(otherKeys.openai), deepseek: Boolean(otherKeys.deepseek) };
+  const baseOrder = (env('BOUA_ENGINE_ORDER') || 'gemini,claude,openai,deepseek').split(',').map((x) => x.trim().toLowerCase().replace('chatgpt', 'openai')).filter((x) => x in configured);
+  const wanted = String(body.engine || 'auto').toLowerCase().replace('chatgpt', 'openai');
+  let order = (wanted in configured ? [wanted, ...baseOrder.filter((x) => x !== wanted)] : baseOrder).filter((e) => configured[e]);
+  if (body.engineOnly && wanted in configured) order = configured[wanted] ? [wanted] : []; // mode /comparer : un seul moteur
+  if (isImage) order = order.filter((e) => e === 'gemini'); // seule la génération d'image Gemini est prise en charge
+  if (!order.length) return jsonError(503, isImage ? 'Génération d’image indisponible (aucune clé Gemini).' : `Moteur ${ENGINE_LABELS[wanted] || wanted} non configuré sur le serveur.`, origin);
+
+  let candidates = [];
+  if (configured.gemini) {
+    const models = await resolveModels(apiKey);
+    const allCandidates = (isImage ? models.image : models.text).slice(0, 8);
+    const freshCandidates = allCandidates.filter((m) => !isBad(m));
+    candidates = freshCandidates.length ? freshCandidates : allCandidates;
+  }
 
   /*
    * TEMPS RÉEL SANS ERREUR 504 : la réponse au navigateur s'ouvre IMMÉDIATEMENT (Vercel exige un début
-   * de réponse en moins de 25 s). Les essais de modèles se font ensuite dans le flux, avec un signal
-   * de vie toutes les 8 s. Une erreur finale est envoyée comme événement : data: {"error":{...}}
+   * de réponse en moins de 25 s). Les essais se font ensuite dans le flux, avec un signal de vie toutes
+   * les 8 s. Une erreur finale est envoyée comme événement : data: {"error":{...}}
    */
   const { readable, writable } = new TransformStream();
   const writer = writable.getWriter();
   const enc = new TextEncoder();
   const send = (str) => writer.write(enc.encode(str)).catch(() => {});
+  const reasonOf = (status, msg) => {
+    if (status === 401 || status === 403) return 'clé refusée';
+    if (status === 402 || /insufficient|balance|billing|credit/i.test(msg)) return 'crédit épuisé';
+    if (status === 429) return /limit:\s*0\b/.test(msg) ? 'pas de quota gratuit' : 'quota épuisé';
+    if (status === 504) return 'trop lent';
+    if (status === 404 || /no longer available|not found|not supported|does not exist/i.test(msg)) return 'modèle indisponible';
+    return `erreur ${status}`;
+  };
 
   (async () => {
     const ping = setInterval(() => send(': ping\n\n'), 8000);
     await send(': ouverture BOUA Cloud\n\n');
-    let res = null;
-    let model = '';
-    let webUsed = false;
     const tried = [];
-    let lastStatus = 502;
-    let lastMsg = 'Impossible de joindre Gemini.';
-    try {
-      outer: for (let k = 0; k < apiKeys.length; k++) {
-        for (const m of candidates) {
-          try {
-            let r = await callOnce(apiKeys[k], m, wantWeb);
-            let preMsg = '';
-            if (!r.ok && wantWeb && (r.status === 400 || r.status === 429 || r.status === 504)) {
-              preMsg = await readErr(r);
-              // Pas de nouvel essai si le modèle n'a aucun quota ou est retiré : on passe directement au suivant
-              if (!/limit:\s*0\b|no longer available|not found|not supported/i.test(preMsg)) {
-                r = await callOnce(apiKeys[k], m, false); // recherche Google indisponible ou trop lente : on répond sans
-                r.__web = false;
-                preMsg = '';
-              }
-            }
-            if (r.ok) {
-              res = r;
-              model = m;
-              webUsed = wantWeb && !preMsg && r.__web !== false;
-              break outer;
-            }
-            lastStatus = r.status;
-            lastMsg = preMsg || (await readErr(r)) || `HTTP ${r.status}`;
-            const unavailable = r.status === 404 || (r.status === 400 && /no longer available|not found|not supported|deprecated|is not available|unsupported model/i.test(lastMsg));
-            let reason = `erreur ${r.status}`;
-            if (unavailable) {
-              reason = 'retiré / indisponible';
-              markBad(m, 6 * 3600 * 1000);
-            } else if (r.status === 429) {
-              const zero = /limit:\s*0\b/.test(lastMsg);
-              reason = zero ? 'pas de quota gratuit' : 'quota épuisé';
-              markBad(m, zero ? 3600 * 1000 : 60 * 1000);
-            } else if (r.status === 504) {
-              reason = 'trop lent';
-              markBad(m, 10 * 60 * 1000);
-            }
-            else if (r.status === 401 || r.status === 403) reason = 'clé refusée';
-            tried.push({ key: k + 1, model: m, status: r.status, reason });
-            if (r.status === 400 && !unavailable) break outer; // la requête elle-même est refusée
-            if (r.status === 401 || r.status === 403) break; // clé invalide : clé suivante
-            // modèle retiré, quota, lenteur, panne : modèle suivant
-          } catch (e) {
-            lastMsg = e.message || lastMsg;
-          }
-        }
-      }
-
-      if (!res) {
-        const summary = tried.map((t) => `${t.model}${apiKeys.length > 1 ? ` (clé ${t.key})` : ''} → ${t.reason}`).join(' • ');
-        console.error('[BOUA Cloud] Échec Gemini :', summary, '—', lastMsg);
-        let message = `Aucun modèle Gemini n'a pu répondre. ${summary ? 'Détail : ' + summary + '. ' : ''}Dernier message de Google : ${lastMsg}`;
-        if (tried.length && tried.every((t) => t.status === 429)) {
-          message = `Quota Gemini gratuit épuisé pour le moment (${summary}). Réessayez dans une minute, ou ajoutez une 2e clé (GEMINI_API_KEY_2) créée dans un autre projet Google.`;
-        } else if (tried.some((t) => t.status === 401 || t.status === 403) && !tried.some((t) => t.status === 429)) {
-          message = `Clé Gemini refusée par Google : vérifiez GEMINI_API_KEY dans Vercel. Détail : ${lastMsg}`;
-        } else if (tried.length && tried.every((t) => t.status === 504)) {
-          message = 'Gemini a mis trop de temps à répondre. Réessayez, ou désactivez la Recherche Web pour une réponse plus rapide.';
-        }
-        await send(`data: ${JSON.stringify({ error: { message, status: lastStatus } })}\n\n`);
-        return;
-      }
-
-      await send(`: modele ${model}\n\n`);
-      // Information pour le site : modèle utilisé et disponibilité de la recherche Google
-      await send(
+    let lastMsg = 'Aucun moteur n’a répondu.';
+    const sendMeta = (engine, model, webUsed) =>
+      send(
         `data: ${JSON.stringify({
           boua: {
+            engine,
+            engineLabel: ENGINE_LABELS[engine],
             model,
             webAvailable: webUsed || webResults.length > 0,
             searched: webResults.length > 0,
@@ -463,19 +533,128 @@ export default async function handler(req) {
           },
         })}\n\n`
       );
-      if (isImage) {
-        // Image : réponse complète envoyée en un seul événement
-        const data = await res.text();
-        await send(`data: ${data.replace(/\n/g, ' ')}\n\n`);
-        return;
+
+    try {
+      for (const engine of order) {
+        /* ---------- Gemini : clés × modèles ---------- */
+        if (engine === 'gemini') {
+          let res = null;
+          let model = '';
+          let webUsed = false;
+          outer: for (let k = 0; k < apiKeys.length; k++) {
+            for (const m of candidates) {
+              try {
+                let r = await callOnce(apiKeys[k], m, wantWeb);
+                let preMsg = '';
+                if (!r.ok && wantWeb && (r.status === 400 || r.status === 429 || r.status === 504)) {
+                  preMsg = await readErr(r);
+                  if (!/limit:\s*0\b|no longer available|not found|not supported/i.test(preMsg)) {
+                    r = await callOnce(apiKeys[k], m, false); // recherche Google indisponible : on répond sans
+                    r.__web = false;
+                    preMsg = '';
+                  }
+                }
+                if (r.ok) {
+                  res = r;
+                  model = m;
+                  webUsed = wantWeb && r.__web !== false;
+                  break outer;
+                }
+                lastMsg = preMsg || (await readErr(r)) || `HTTP ${r.status}`;
+                const reason = reasonOf(r.status, lastMsg);
+                if (reason === 'modèle indisponible') markBad(m, 6 * 3600 * 1000);
+                else if (reason === 'pas de quota gratuit') markBad(m, 3600 * 1000);
+                else if (reason === 'quota épuisé') markBad(m, 60 * 1000);
+                else if (reason === 'trop lent') markBad(m, 10 * 60 * 1000);
+                tried.push(`Gemini ${m}${apiKeys.length > 1 ? ` (clé ${k + 1})` : ''} → ${reason}`);
+                if (r.status === 400 && reason !== 'modèle indisponible') break outer; // requête refusée : on passe au moteur suivant
+                if (r.status === 401 || r.status === 403) break; // clé suivante
+              } catch (e) {
+                lastMsg = e.message || lastMsg;
+              }
+            }
+          }
+          if (!res) continue;
+          await send(`: modele ${model}\n\n`);
+          await sendMeta('gemini', model, webUsed);
+          if (isImage) {
+            const data = await res.text();
+            await send(`data: ${data.replace(/\n/g, ' ')}\n\n`);
+            return;
+          }
+          const reader = res.body.getReader();
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            await writer.write(value).catch(() => {});
+          }
+          return;
+        }
+
+        /* ---------- ChatGPT / Claude / DeepSeek ---------- */
+        const key = otherKeys[engine];
+        let model = '';
+        try {
+          model = await resolveOtherModel(engine, key);
+          const r = await callOtherEngine(engine, key, model, contents, system, { maxTokens: body.maxTokens });
+          if (!r.ok) {
+            lastMsg = (await readErr(r)) || `HTTP ${r.status}`;
+            tried.push(`${ENGINE_LABELS[engine]} ${model} → ${reasonOf(r.status, lastMsg)}`);
+            if (r.status === 404) delete otherModelCache[engine];
+            continue;
+          }
+          await send(`: modele ${model}\n\n`);
+          await sendMeta(engine, model, false);
+          // Conversion du flux vers le format Gemini attendu par le site
+          const reader = r.body.getReader();
+          const dec = new TextDecoder();
+          let buf = '';
+          let gotText = false;
+          const handle = async (line) => {
+            const l = line.replace(/\r$/, '');
+            if (!l.startsWith('data:')) return;
+            const d = l.slice(5).trim();
+            if (!d || d === '[DONE]') return;
+            try {
+              const j = JSON.parse(d);
+              if (j?.type === 'error' || j?.error) {
+                lastMsg = j.error?.message || 'Erreur';
+                return;
+              }
+              const t = otherStreamText(engine, j);
+              if (t) {
+                gotText = true;
+                await send(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: t }] } }] })}\n\n`);
+              }
+            } catch (e) {}
+          };
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            let i;
+            while ((i = buf.indexOf('\n')) >= 0) {
+              await handle(buf.slice(0, i));
+              buf = buf.slice(i + 1);
+            }
+          }
+          if (buf) await handle(buf);
+          if (gotText) return;
+          tried.push(`${ENGINE_LABELS[engine]} ${model} → réponse vide`);
+        } catch (e) {
+          lastMsg = e.message || lastMsg;
+          tried.push(`${ENGINE_LABELS[engine]} ${model} → ${lastMsg.slice(0, 80)}`);
+        }
       }
-      // Texte : relais direct du flux Gemini, morceau par morceau
-      const reader = res.body.getReader();
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        await writer.write(value).catch(() => {});
+
+      // Tous les moteurs ont échoué
+      const summary = tried.join(' • ');
+      console.error('[BOUA Cloud] Échec de tous les moteurs :', summary, '—', lastMsg);
+      let message = `Aucun moteur n'a pu répondre. ${summary ? 'Détail : ' + summary + '. ' : ''}Dernier message : ${lastMsg}`;
+      if (tried.length && tried.every((t) => /quota/.test(t))) {
+        message = `Quotas épuisés sur tous les moteurs pour le moment (${summary}). Réessayez dans une minute.`;
       }
+      await send(`data: ${JSON.stringify({ error: { message } })}\n\n`);
     } catch (e) {
       await send(`data: ${JSON.stringify({ error: { message: e.message || 'Erreur BOUA Cloud' } })}\n\n`);
     } finally {
