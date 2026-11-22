@@ -421,6 +421,10 @@ async function searchWikipedia(query, lang) {
   }
 }
 
+// Seul le contenu à risque ÉLEVÉ est bloqué : les sujets d'actualité (guerre, terrorisme, politique, élections) restent traités
+const SAFETY_SETTINGS = ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT', 'HARM_CATEGORY_CIVIC_INTEGRITY'].map((category) => ({ category, threshold: 'BLOCK_ONLY_HIGH' }));
+const BLOCK_RE = /SAFETY|PROHIBITED|BLOCKLIST|SPII|RECITATION|OTHER|LANGUAGE/;
+
 /* ---------------- DONNÉES EN TEMPS RÉEL (gratuites, sans clé) ---------------- */
 // Détection rapide : on n'interroge l'IA (extraction) que si ces mots sont présents
 export const REALTIME_RE = new RegExp(String.raw`(m[ée]t[ée]o|temps qu.il fait|quel temps|temp[ée]rature (à|a|en|au|de|aujourd)|pr[ée]visions? (météo|du temps|pour)|\bil (pleut|neige)\b|\bpluie\b|\bclima\b|qu[ée] tiempo|el tiempo (en|hoy|mañana|para)|\blluvia|weather|forecast|طقس|taux de change|tipo de cambio|exchange rate|cours (de l.|du) ?(euro|dollar|franc|dirham|yen|livre)|\bdevises?\b|\bdivisas?\b|currency|(convertir|conversion|combien (font|fait|vaut|valent)|cu[áa]nto (es|son|vale)n?|how much is)[^.?!
@@ -559,7 +563,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 14, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 15, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -692,8 +696,10 @@ export default async function handler(req) {
   }
 
   let contents;
+  let pristineContents;
   try {
     contents = sanitizeContents(body.contents);
+    pristineContents = JSON.parse(JSON.stringify(contents));
   } catch (e) {
     return jsonError(400, e.message, origin);
   }
@@ -705,12 +711,13 @@ export default async function handler(req) {
   // 3. Appel Gemini : pour chaque clé, essaie les modèles dans l'ordre jusqu'à obtenir une réponse
   const wantWeb = Boolean(body.web || body.webSearch || body.search || body.googleSearch) && !isImage;
   const ATTEMPT_TIMEOUT_MS = 20000; // délai max d'attente d'un modèle avant de passer au suivant
-  const callOnce = async (key, model, withWeb) => {
-    const payload = { contents };
+  const callOnce = async (key, model, withWeb, override) => {
+    const payload = { contents: override || contents };
     if (system && !isImage) payload.systemInstruction = { parts: [{ text: system }] };
     payload.generationConfig = isImage
       ? { responseModalities: ['TEXT', 'IMAGE'], ...(body.aspectRatio ? { imageConfig: { aspectRatio: String(body.aspectRatio).slice(0, 8) } } : {}) }
       : { temperature, maxOutputTokens: Math.min(65536, Math.max(1024, Number(body.maxTokens) || (speed === 'fast' ? 8192 : 16384))) };
+    if (!isImage) payload.safetySettings = SAFETY_SETTINGS; // actualité, politique, conflits : informer sans bloquer
     if (withWeb) payload.tools = [{ google_search: {} }];
     const url = isImage ? `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent` : `${GEMINI_BASE}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
     const ctrl = new AbortController();
@@ -884,12 +891,63 @@ export default async function handler(req) {
         }
       }
 
+      /** Transmet un flux Gemini ; ne commence qu'au 1er texte réel. Retourne 'ok', 'bloqué (…)' ou 'réponse vide' */
+      const pipeGemini = async (r, m, webUsed) => {
+        const reader = r.body.getReader();
+        const dec = new TextDecoder();
+        let buf = '';
+        let started = false;
+        let block = '';
+        const pending = [];
+        const handle = async (line) => {
+          const l = line.replace(/\r$/, '');
+          if (!l.startsWith('data:')) return;
+          const d = l.slice(5).trim();
+          if (!d) return;
+          let j;
+          try {
+            j = JSON.parse(d);
+          } catch (e) {
+            return;
+          }
+          const cand = j?.candidates?.[0];
+          const hasText = (cand?.content?.parts || []).some((p) => p.text && !p.thought && p.text.trim());
+          if (j?.promptFeedback?.blockReason) block = j.promptFeedback.blockReason;
+          if (!started && cand?.finishReason && BLOCK_RE.test(cand.finishReason) && !hasText) block = cand.finishReason;
+          if (!started && !hasText) {
+            pending.push(d);
+            return;
+          }
+          if (!started) {
+            started = true;
+            await send(`: modele ${m}\n\n`);
+            await sendMeta('gemini', m, webUsed);
+            for (const p of pending) await send(`data: ${p}\n\n`);
+          }
+          await send(`data: ${d}\n\n`);
+        };
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += dec.decode(value, { stream: true });
+          let k;
+          while ((k = buf.indexOf('\n')) >= 0) {
+            await handle(buf.slice(0, k));
+            buf = buf.slice(k + 1);
+          }
+        }
+        if (buf) await handle(buf);
+        return started ? 'ok' : block ? `réponse bloquée par le filtre Google (${block})` : 'réponse vide';
+      };
+
+      let blockedByFilter = false;
       for (const engine of order) {
         /* ---------- Gemini : clés × modèles ---------- */
         if (engine === 'gemini') {
           let res = null;
           let model = '';
           let webUsed = false;
+          let emptyTries = 0;
           outer: for (let k = 0; k < apiKeys.length; k++) {
             for (const m of candidates) {
               try {
@@ -903,12 +961,21 @@ export default async function handler(req) {
                     preMsg = '';
                   }
                 }
-                if (r.ok) {
+                if (r.ok && isImage) {
                   res = r;
                   model = m;
-                  webUsed = wantWeb && r.__web !== false;
-                  if (!isImage) lastGood[speed] = m;
                   break outer;
+                }
+                if (r.ok) {
+                  const outcome = await pipeGemini(r, m, wantWeb && r.__web !== false);
+                  if (outcome === 'ok') {
+                    lastGood[speed] = m;
+                    return;
+                  }
+                  tried.push(`Gemini ${m} → ${outcome}`);
+                  if (/bloquée/.test(outcome)) blockedByFilter = true;
+                  if (++emptyTries >= 2) break outer; // inutile d'insister : moteur suivant / reformulation
+                  continue;
                 }
                 lastMsg = preMsg || (await readErr(r)) || `HTTP ${r.status}`;
                 const reason = reasonOf(r.status, lastMsg);
@@ -926,18 +993,9 @@ export default async function handler(req) {
           }
           if (!res) continue;
           await send(`: modele ${model}\n\n`);
-          await sendMeta('gemini', model, webUsed);
-          if (isImage) {
-            const data = await res.text();
-            await send(`data: ${data.replace(/\n/g, ' ')}\n\n`);
-            return;
-          }
-          const reader = res.body.getReader();
-          while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            await writer.write(value).catch(() => {});
-          }
+          await sendMeta('gemini', model, false);
+          const data = await res.text();
+          await send(`data: ${data.replace(/\n/g, ' ')}\n\n`);
           return;
         }
 
@@ -1009,10 +1067,34 @@ export default async function handler(req) {
         tried.push('Image gratuite → indisponible');
       }
 
+      // Dernier recours si une réponse a été bloquée ou vide : question reformulée de façon neutre et factuelle
+      if (!isImage && configured.gemini && apiKeys.length && candidates.length && tried.some((t) => /bloquée|vide/.test(t))) {
+        const note = { text: "\n\n(Consigne : réponds de manière factuelle, neutre et équilibrée, comme une agence de presse ou une encyclopédie : contexte, faits récents datés, acteurs, enjeux humanitaires et perspectives. Aucune incitation, aucun détail opérationnel violent.)" };
+        const variants = [
+          contents.map((c, i) => (i === contents.length - 1 ? { ...c, parts: [...c.parts, note] } : c)),
+          pristineContents.map((c, i) => (i === pristineContents.length - 1 ? { ...c, parts: [...c.parts, note] } : c)),
+        ];
+        const models = [...candidates.filter((m) => !/lite/.test(m)), ...candidates.filter((m) => /lite/.test(m))].slice(0, 2);
+        for (const v of variants) {
+          for (const m of models) {
+            try {
+              const r = await callOnce(apiKeys[0], m, false, v);
+              if (!r.ok) continue;
+              const outcome = await pipeGemini(r, m, false);
+              if (outcome === 'ok') return;
+              tried.push(`Gemini ${m} (reformulée) → ${outcome}`);
+            } catch (e) {}
+          }
+        }
+      }
+
       // Tous les moteurs ont échoué
       const summary = tried.join(' • ');
       console.error('[BOUA Cloud] Échec de tous les moteurs :', summary, '—', lastMsg);
       let message = `Aucun moteur n'a pu répondre. ${summary ? 'Détail : ' + summary + '. ' : ''}Dernier message : ${lastMsg}`;
+      if (blockedByFilter || tried.some((t) => /bloquée/.test(t))) {
+        message = 'Le filtre de sécurité de Google a bloqué cette réponse. Reformulez la question (par exemple : « Résume les dernières actualités du Mali ») ou réessayez.';
+      }
       if (tried.length && tried.every((t) => /quota/.test(t))) {
         message = `Quotas épuisés sur tous les moteurs pour le moment (${summary}). Réessayez dans une minute.`;
       }
