@@ -555,6 +555,7 @@ function sanitizeContents(contents) {
 
 /* ---------------- Gestionnaire principal ---------------- */
 export default async function handler(req) {
+  const startedAt = Date.now();
   const origin = allowedOrigin(req);
   if (req.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders(origin) });
   if (req.method === 'GET') {
@@ -563,7 +564,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 16, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 17, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -900,6 +901,7 @@ export default async function handler(req) {
         let gotText = false;
         let midBlock = '';
         let sofar = '';
+        let finished = false; // finishReason reçu (sinon : flux interrompu)
         let block = '';
         const pending = [];
         const handle = async (line) => {
@@ -919,8 +921,9 @@ export default async function handler(req) {
             gotText = true;
             sofar += cand.content.parts.filter((p) => p.text && !p.thought).map((p) => p.text).join('');
           }
-          // Coupure en pleine réponse par le filtre : on ne transmet pas la fin de flux, on complétera ensuite
-          if ((started || hasText) && cand?.finishReason && BLOCK_RE.test(cand.finishReason)) {
+          if (cand?.finishReason) finished = true;
+          // Coupure en pleine réponse (filtre ou limite de longueur) : on ne transmet pas la fin de flux, on complétera ensuite
+          if ((started || hasText) && cand?.finishReason && (BLOCK_RE.test(cand.finishReason) || cand.finishReason === 'MAX_TOKENS')) {
             midBlock = cand.finishReason;
             if (hasText) {
               const textOnly = { candidates: [{ content: { role: 'model', parts: cand.content.parts.filter((p) => p.text && !p.thought) } }] };
@@ -959,22 +962,35 @@ export default async function handler(req) {
         }
         if (buf) await handle(buf);
         if (midBlock && gotText) return { cut: midBlock, sofar };
+        if (gotText && !finished) return { cut: 'INTERRUPTED', sofar }; // connexion Google coupée en cours de route
         if (cont) return gotText ? 'ok' : block ? `suite bloquée (${block})` : 'suite vide';
         return started ? 'ok' : block ? `réponse bloquée par le filtre Google (${block})` : 'réponse vide';
       };
 
       /** Réponse coupée en plein milieu : on demande la SUITE (formulation neutre) et on la colle à la suite du texte déjà affiché */
-      const finishCutAnswer = async (firstModel, partial) => {
-        let sofar = partial;
+      const finishCutAnswer = async (firstModel, partial, reason = 'SAFETY', fullTextSoFar) => {
+        let sofar = fullTextSoFar ?? partial;
+        const lengthCut = reason === 'MAX_TOKENS' || reason === 'INTERRUPTED';
         const models = [firstModel, ...candidates.filter((m) => m !== firstModel)].slice(0, 3);
-        for (let attempt = 0; attempt < 3; attempt++) {
-          const base = attempt === 0 ? contents : pristineContents;
+        const maxAttempts = lengthCut ? 5 : 3;
+        let rounds = 0;
+        for (let attempt = 0; attempt < maxAttempts; attempt++) {
+          if (++rounds > 8) break;
+          // Limite Vercel (~300 s de flux) : on s'arrête à temps et on propose « Continuer »
+          if (Date.now() - startedAt > 230000) break;
+          const base = lengthCut || attempt === 0 ? contents : pristineContents;
           const conv = [
             ...base,
             { role: 'model', parts: [{ text: sofar.slice(-12000) }] },
             {
               role: 'user',
-              parts: [{ text: "Ta réponse précédente a été coupée. Continue EXACTEMENT là où elle s'arrête (si le dernier mot est coupé, termine-le), sans rien répéter ni t'excuser, de manière factuelle, neutre et équilibrée, comme une agence de presse : faits datés, acteurs, enjeux, perspectives. Aucun détail opérationnel violent." }],
+              parts: [
+                {
+                  text: lengthCut
+                    ? "Ta réponse précédente a été coupée (limite de longueur). Continue EXACTEMENT là où elle s'arrête — au milieu d'un mot, d'une phrase ou d'un bloc de code si besoin — sans rien répéter, sans introduction ni excuse. Si un bloc de code était ouvert, continue le code sans rouvrir de ``` et referme-le à la fin."
+                    : "Ta réponse précédente a été coupée. Continue EXACTEMENT là où elle s'arrête (si le dernier mot est coupé, termine-le), sans rien répéter ni t'excuser, de manière factuelle, neutre et équilibrée, comme une agence de presse : faits datés, acteurs, enjeux, perspectives. Aucun détail opérationnel violent.",
+                },
+              ],
             },
           ];
           try {
@@ -984,11 +1000,14 @@ export default async function handler(req) {
             if (out === 'ok') return true;
             if (out && out.cut) {
               sofar += out.sofar;
+              attempt = out.cut === 'MAX_TOKENS' || out.cut === 'INTERRUPTED' ? Math.max(-1, attempt - 1) : attempt; // longue réponse qui avance : on continue
+              if (Date.now() - startedAt > 230000) break;
               continue;
             }
           } catch (e) {}
         }
-        await send(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: '\n\n> ⚠️ La suite de cette réponse a été bloquée par le filtre de sécurité de Google. Cliquez sur « Régénérer » ou reformulez la question (ex. : « Résume les dernières actualités du Mali »).' }] } }] })}\n\n`);
+        await send(`data: ${JSON.stringify({ boua: { incomplete: true } })}\n\n`);
+        if (!lengthCut) await send(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: '\n\n> ⚠️ La suite de cette réponse a été bloquée par le filtre de sécurité de Google. Cliquez sur « ▶ Continuer » ou reformulez la question.' }] } }] })}\n\n`);
         return true;
       };
 
@@ -1025,7 +1044,7 @@ export default async function handler(req) {
                     return;
                   }
                   if (outcome && outcome.cut) {
-                    await finishCutAnswer(m, outcome.sofar);
+                    await finishCutAnswer(m, outcome.sofar, outcome.cut);
                     return;
                   }
                   tried.push(`Gemini ${m} → ${outcome}`);
@@ -1139,7 +1158,7 @@ export default async function handler(req) {
               const outcome = await pipeGemini(r, m, false);
               if (outcome === 'ok') return;
               if (outcome && outcome.cut) {
-                await finishCutAnswer(m, outcome.sofar);
+                await finishCutAnswer(m, outcome.sofar, outcome.cut);
                 return;
               }
               tried.push(`Gemini ${m} (reformulée) → ${outcome}`);
