@@ -349,6 +349,12 @@ export function parseNewsRss(xml, max = 8) {
   return items;
 }
 
+export function searchKeywords(query) {
+  const STOP = /^(quand|quel|quelle|quels|quelles|qui|que|quoi|comment|pourquoi|où|est|sont|ce|c|qu|les|le|la|l|des|de|du|d|un|une|en|à|au|aux|et|ou|pour|sur|dans|me|moi|dis|donne|peux|tu|vous|est-ce|explique|explique-moi|expliquer|parle|parle-moi|raconte|résume|donne-moi|dis-moi|peux-tu|actuelle|actuel|actuels|actuelles|actuellement|aujourd'hui|aujourd’hui|maintenant|stp|svp|merci|bonjour|salut|nous|situation|cuándo|qué|quién|cómo|dónde|son|es|el|los|las|del|y|para|por|dime|explícame|actual|hoy|ahora|when|what|who|how|where|is|are|the|of|in|on|for|and|tell|explain|current|currently|latest|today|now|please|a|an)$/i;
+  const words = String(query || '').replace(/[?!¿¡.,;:«»"()]/g, ' ').split(/\s+/).filter((w) => w && !STOP.test(w));
+  return (words.length ? words.join(' ') : String(query || '')).trim().slice(0, 150);
+}
+
 async function searchNews(query, lang) {
   const [hl, gl] = NEWS_LOCALES[lang] || NEWS_LOCALES.fr;
   // Mots-clés uniquement : « Quand sont les élections générales en Espagne ? » → « élections générales Espagne »
@@ -436,6 +442,18 @@ async function searchWikipedia(query, lang) {
   } catch (e) {
     return [];
   }
+}
+
+/** Faits de référence (connus et stables). Injectés seulement si la question touche le sujet. */
+const REFERENCE_FACTS = [
+  { re: /\b(aes|alliance des [ée]tats du sahel|sahel|mali|burkina|niger)\b/i, text: "L'Alliance des États du Sahel (AES) regroupe TROIS pays : le Mali, le Burkina Faso et le Niger (la Guinée n'en fait PAS partie). Pacte signé en septembre 2023, confédération créée en juillet 2024 ; les trois pays ont quitté la CEDEAO (effectif fin janvier 2025)." },
+  { re: /\b(mali|malien|bamako|go[iï]ta)\b/i, text: "Mali : dirigé par le général Assimi Goïta (président de la transition depuis 2021 ; mandat de 5 ans renouvelable accordé en 2025). Les partis politiques ont été dissous en mai 2025. La MINUSMA s'est retirée fin 2023 ; les forces françaises en 2022." },
+  { re: /\b(burkina|ouagadougou|traor[ée])\b/i, text: "Burkina Faso : dirigé par le capitaine Ibrahim Traoré depuis septembre 2022." },
+  { re: /\b(niger|niamey|tiani)\b/i, text: "Niger : dirigé par le général Abdourahamane Tiani depuis le coup d'État de juillet 2023." },
+  { re: /\b(fcfa|cfa|xof|xaf|franc cfa)\b/i, text: "Franc CFA : parité fixe 1 euro = 655,957 FCFA (XOF et XAF)." },
+];
+export function referenceFacts(text) {
+  return REFERENCE_FACTS.filter((f) => f.re.test(text)).map((f) => '- ' + f.text);
 }
 
 // Seul le contenu à risque ÉLEVÉ est bloqué : les sujets d'actualité (guerre, terrorisme, politique, élections) restent traités
@@ -619,7 +637,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 25, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 26, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -820,12 +838,24 @@ export default async function handler(req) {
   if (!isImage && (newsy || (wantWeb && body.alwaysSearch))) {
     const lastUser = [...contents].reverse().find((c) => c.role === 'user');
     const userText = String(body.query || lastUser?.parts?.map((p) => p.text || '').join(' ') || '');
-    webResults = await searchNews(userText, String(body.lang || 'fr'));
-    if (webResults.length && lastUser) {
+    const lang0 = String(body.lang || 'fr');
+    const kw = searchKeywords(userText);
+    // En parallèle : titres d'actualité + extraits de pages web (DuckDuckGo) + résumé Wikipédia
+    const [news, web, wiki] = await Promise.all([
+      searchNews(userText, lang0).catch(() => []),
+      searchWeb(kw + ' ' + new Date().getFullYear(), lang0).catch(() => []),
+      searchWikipedia(kw, lang0).catch(() => []),
+    ]);
+    webResults = news;
+    const extra = [...web.filter((w) => w.snippet).slice(0, 5), ...wiki.slice(0, 1)];
+    for (const x of extra) if (!webResults.some((w) => w.uri === x.uri)) webResults.push(x);
+    const facts = referenceFacts(userText);
+    if ((webResults.length || facts.length) && lastUser) {
       const today = new Date().toISOString().slice(0, 10);
-      const block =
-        `\n\n[RÉSULTATS DE RECHERCHE WEB RÉELS — Google Actualités, consultés le ${today}. Ces informations sont plus récentes et plus fiables que tes connaissances internes : base ta réponse dessus, cite les sources par leur nom et indique les dates.]\n` +
-        webResults.map((r, i) => `${i + 1}. ${r.title}${r.source ? ` — ${r.source}` : ''}${r.date ? ` (${r.date})` : ''}`).join('\n');
+      let block = `\n\n[INFORMATIONS VÉRIFIÉES — consultées le ${today}. RÈGLES STRICTES : 1) n'affirme QUE ce qui est écrit ci-dessous ou dans les faits de référence ; 2) ne déduis jamais un fait à partir d'un simple titre (un titre qui cite plusieurs pays ne veut pas dire qu'ils sont alliés) ; 3) si une information n'y figure pas, dis « je n'ai pas pu le vérifier » au lieu de deviner ; 4) cite la source et la date de chaque fait important ; 5) en cas de contradiction, la source la plus récente l'emporte.]\n`;
+      if (facts.length) block += `\nFAITS DE RÉFÉRENCE (sûrs) :\n${facts.join('\n')}\n`;
+      if (news.length) block += `\nACTUALITÉS (titres, Google Actualités) :\n` + news.map((r, i) => `${i + 1}. ${r.title}${r.source ? ` — ${r.source}` : ''}${r.date ? ` (${r.date})` : ''}`).join('\n') + '\n';
+      if (extra.length) block += `\nEXTRAITS DE PAGES (contenu réel) :\n` + extra.map((r) => `• ${r.title}${r.source ? ` — ${r.source}` : ''} : ${String(r.snippet || '').replace(/\s+/g, ' ').slice(0, 700)}`).join('\n');
       lastUser.parts = [...lastUser.parts, { text: block }];
     }
   }
@@ -847,9 +877,11 @@ export default async function handler(req) {
     candidates = freshCandidates.length ? freshCandidates : allCandidates;
     if (!isImage) {
       // VITESSE : questions simples → modèles « Lite » d'abord ; puis le dernier modèle qui a fonctionné en tête
-      if (speed === 'fast') candidates = [...candidates.filter((m) => /lite/.test(m)), ...candidates.filter((m) => !/lite/.test(m))];
+      if (speed === 'fast' && !newsy) candidates = [...candidates.filter((m) => /lite/.test(m)), ...candidates.filter((m) => !/lite/.test(m))];
+      // Exactitude : pour l'actualité, les modèles précis passent avant les modèles « lite »
+      if (newsy) candidates = [...candidates.filter((m) => !/lite/.test(m)), ...candidates.filter((m) => /lite/.test(m))];
       const good = lastGood[speed];
-      if (good && candidates.includes(good)) candidates = [good, ...candidates.filter((m) => m !== good)];
+      if (good && candidates.includes(good) && !(newsy && /lite/.test(good))) candidates = [good, ...candidates.filter((m) => m !== good)];
     }
   }
 
