@@ -637,7 +637,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 26, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 27, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -1134,7 +1134,9 @@ export default async function handler(req) {
             },
           ];
           try {
-            const r = await callOnce(apiKeys[Math.min(attempt, apiKeys.length - 1)], models[attempt % models.length], false, conv);
+            let r = await callOnce(apiKeys[Math.min(attempt, apiKeys.length - 1)], models[attempt % models.length], false, conv);
+            // Quota / surcharge : on essaie aussitôt une autre clé
+            for (let kk = 0; !r.ok && (r.status === 429 || r.status === 503) && kk < apiKeys.length; kk++) r = await callOnce(apiKeys[kk], models[attempt % models.length], false, conv);
             if (!r.ok) continue;
             const out = await pipeGemini(r, models[attempt % models.length], false, true);
             if (out === 'ok') return true;
@@ -1150,6 +1152,8 @@ export default async function handler(req) {
             }
           } catch (e) {}
         }
+        // La réponse se termine déjà proprement (questions de suivi présentes) : pas de bouton « Continuer »
+        if (/<\/suggestions>\s*$/i.test(sofar.trimEnd())) return true;
         logEvent('suite-impossible', reason);
         await send(`data: ${JSON.stringify({ boua: { incomplete: true } })}\n\n`);
         if (!lengthCut) await send(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: '\n\n> ⚠️ La suite de cette réponse a été bloquée par le filtre de sécurité de Google. Cliquez sur « ▶ Continuer » ou reformulez la question.' }] } }] })}\n\n`);
