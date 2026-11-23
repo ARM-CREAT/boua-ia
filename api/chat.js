@@ -619,7 +619,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 24, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 25, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -1078,7 +1078,8 @@ export default async function handler(req) {
       const finishCutAnswer = async (firstModel, partial, reason = 'SAFETY', fullTextSoFar) => {
         let sofar = fullTextSoFar ?? partial;
         const lengthCut = reason === 'MAX_TOKENS' || reason === 'INTERRUPTED';
-        const models = [firstModel, ...candidates.filter((m) => m !== firstModel)].slice(0, 3);
+        // Pour la suite : d'abord les modèles fiables (non « lite », non écartés), le modèle coupé en dernier
+        const models = [...candidates.filter((m) => m !== firstModel && !/lite/.test(m) && !isBad(m)), ...candidates.filter((m) => m !== firstModel && (/lite/.test(m) || isBad(m))), firstModel].slice(0, 3);
         const maxAttempts = lengthCut ? 5 : 3;
         let rounds = 0;
         for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -1176,6 +1177,11 @@ export default async function handler(req) {
                   }
                   if (outcome && outcome.cut) {
                     logEvent('reponse-coupee', `${m} ${outcome.cut} (${outcome.sofar.length} car.)`);
+                    // Modèle qui coupe ses réponses sans prévenir : on l'écarte 3 h (les prochaines questions iront sur un autre)
+                    if (outcome.cut === 'INTERRUPTED') {
+                      markBad(m, 3 * 3600 * 1000);
+                      if (lastGood[speed] === m) delete lastGood[speed];
+                    }
                     await finishCutAnswer(m, outcome.sofar, outcome.cut);
                     return;
                   }
