@@ -615,7 +615,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 20, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 21, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -1119,9 +1119,15 @@ export default async function handler(req) {
           outer: for (let k = 0; k < apiKeys.length; k++) {
             for (const m of candidates) {
               try {
-                let r = await callOnce(apiKeys[k], m, useGoogle);
+                const g = useGoogle && !/lite/.test(m);
+                let r = await callOnce(apiKeys[k], m, g);
+                // Google surchargé (503) : une seconde chance après une courte pause
+                if (r.status === 503) {
+                  await new Promise((res) => setTimeout(res, 1200));
+                  r = await callOnce(apiKeys[k], m, g);
+                }
                 let preMsg = '';
-                if (!r.ok && useGoogle && (r.status === 400 || r.status === 429 || r.status === 504)) {
+                if (!r.ok && g && (r.status === 400 || r.status === 429 || r.status === 504)) {
                   preMsg = await readErr(r);
                   if (!/limit:\s*0\b|no longer available|not found|not supported/i.test(preMsg)) {
                     r = await callOnce(apiKeys[k], m, false); // recherche Google indisponible : on répond sans
@@ -1135,10 +1141,16 @@ export default async function handler(req) {
                   break outer;
                 }
                 if (r.ok) {
-                  const outcome = await pipeGemini(r, m, useGoogle && r.__web !== false);
+                  let outcome = await pipeGemini(r, m, g && r.__web !== false);
+                  // Réponse vide / appel mal formé avec la recherche Google : on relance aussitôt SANS l'outil
+                  if (g && r.__web !== false && /^réponse vide/.test(outcome)) {
+                    logEvent('google-vide', `${m} ${outcome} → relance sans Google`);
+                    const r3 = await callOnce(apiKeys[k], m, false);
+                    if (r3.ok) outcome = await pipeGemini(r3, m, false);
+                  }
                   if (outcome === 'ok') {
                     lastGood[speed] = m;
-                    logEvent('ok', `${m} ${speed}${useGoogle && r.__web !== false ? ' +google' : ''} ${Date.now() - startedAt} ms`);
+                    logEvent('ok', `${m} ${speed}${g && r.__web !== false ? ' +google' : ''} ${Date.now() - startedAt} ms`);
                     return;
                   }
                   if (outcome && outcome.cut) {
@@ -1149,9 +1161,9 @@ export default async function handler(req) {
                   if (/^réponse vide/.test(outcome) && /gemini-3|latest/.test(m) && !noThinkCfg.has(m)) {
                     noThinkCfg.add(m);
                     logEvent('vide-avec-reflexion', `${m} ${outcome} → relance sans réglage`);
-                    const r2 = await callOnce(apiKeys[k], m, useGoogle);
+                    const r2 = await callOnce(apiKeys[k], m, false);
                     if (r2.ok) {
-                      const o2 = await pipeGemini(r2, m, useGoogle);
+                      const o2 = await pipeGemini(r2, m, false);
                       if (o2 === 'ok') {
                         lastGood[speed] = m;
                         return;
@@ -1165,7 +1177,7 @@ export default async function handler(req) {
                   tried.push(`Gemini ${m} → ${outcome}`);
                   logEvent('modele-echec', `${m} → ${outcome}`);
                   if (/bloquée/.test(outcome)) blockedByFilter = true;
-                  if (++emptyTries >= 2) break outer; // inutile d'insister : moteur suivant / reformulation
+                  if (++emptyTries >= 4) break outer; // après 4 modèles vides : moteur suivant / reformulation
                   continue;
                 }
                 lastMsg = preMsg || (await readErr(r)) || `HTTP ${r.status}`;
@@ -1270,8 +1282,15 @@ export default async function handler(req) {
         for (const v of variants) {
           for (const m of models) {
             try {
-              const r = await callOnce(apiKeys[0], m, false, v);
-              if (!r.ok) continue;
+              let r = await callOnce(apiKeys[0], m, false, v);
+              if (r.status === 503) {
+                await new Promise((res) => setTimeout(res, 1200));
+                r = await callOnce(apiKeys[Math.min(1, apiKeys.length - 1)], m, false, v);
+              }
+              if (!r.ok) {
+                tried.push(`Gemini ${m} (reformulée) → erreur ${r.status}`);
+                continue;
+              }
               const outcome = await pipeGemini(r, m, false);
               if (outcome === 'ok') return;
               if (outcome && outcome.cut) {
