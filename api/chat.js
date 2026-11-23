@@ -352,7 +352,7 @@ export function parseNewsRss(xml, max = 8) {
 async function searchNews(query, lang) {
   const [hl, gl] = NEWS_LOCALES[lang] || NEWS_LOCALES.fr;
   // Mots-clés uniquement : « Quand sont les élections générales en Espagne ? » → « élections générales Espagne »
-  const STOP = /^(quand|quel|quelle|quels|quelles|qui|que|quoi|comment|pourquoi|où|est|sont|ce|c|qu|les|le|la|l|des|de|du|d|un|une|en|à|au|aux|et|ou|pour|sur|dans|me|moi|dis|donne|peux|tu|vous|est-ce|cuándo|cuando|qué|que|quién|cómo|dónde|son|es|el|los|las|del|de|y|en|para|por|me|dime|when|what|who|how|where|is|are|the|of|in|on|for|and|tell|me|a|an)$/i;
+  const STOP = /^(quand|quel|quelle|quels|quelles|qui|que|quoi|comment|pourquoi|où|est|sont|ce|c|qu|les|le|la|l|des|de|du|d|un|une|en|à|au|aux|et|ou|pour|sur|dans|me|moi|dis|donne|peux|tu|vous|est-ce|cuándo|cuando|qué|que|quién|cómo|dónde|son|es|el|los|las|del|de|y|en|para|por|me|dime|when|what|who|how|where|is|are|the|of|in|on|for|and|tell|me|a|an|explique|explique-moi|expliquer|explique-nous|parle|parle-moi|parlez|raconte|raconte-moi|résume|résume-moi|donne-moi|dis-moi|peux-tu|pouvez-vous|actuelle|actuel|actuels|actuelles|actuellement|aujourd'hui|aujourd’hui|maintenant|stp|svp|merci|bonjour|salut|nous|explícame|explica|háblame|actual|hoy|ahora|explain|current|currently|latest|today|now|please)$/i;
   const words = String(query || '')
     .replace(/[?!¿¡.,;:«»"()]/g, ' ')
     .split(/\s+/)
@@ -362,10 +362,19 @@ async function searchNews(query, lang) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), 6000);
   try {
-    const url = `https://news.google.com/rss/search?q=${encodeURIComponent(q)}&hl=${hl}&gl=${gl}&ceid=${gl}:${hl}`;
-    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (BOUA Cloud)' }, signal: ctrl.signal });
-    if (!res.ok) return [];
-    return parseNewsRss(await res.text());
+    const get = async (qq) => {
+      const url = `https://news.google.com/rss/search?q=${encodeURIComponent(qq)}&hl=${hl}&gl=${gl}&ceid=${gl}:${hl}`;
+      const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0 (BOUA Cloud)' }, signal: ctrl.signal });
+      return res.ok ? parseNewsRss(await res.text()) : [];
+    };
+    let out = await get(q);
+    // Trop précis ? on réessaie avec les noms propres / mots principaux (« situation Mali » → « Mali »)
+    if (!out.length && words.length > 1) {
+      const proper = words.filter((w) => /^[A-ZÀ-Ý]/.test(w) && w.length > 2);
+      const q2 = (proper.length ? proper : words.slice(-2)).join(' ');
+      if (q2 && q2 !== q) out = await get(q2);
+    }
+    return out;
   } catch (e) {
     return [];
   } finally {
@@ -606,7 +615,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 19, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 20, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -969,6 +978,8 @@ export default async function handler(req) {
         let midBlock = '';
         let sofar = '';
         let finished = false; // finishReason reçu (sinon : flux interrompu)
+        let streamErr = '';
+        let lastFinish = '';
         let block = '';
         const pending = [];
         const handle = async (line) => {
@@ -982,7 +993,12 @@ export default async function handler(req) {
           } catch (e) {
             return;
           }
+          if (j?.error && !started) {
+            streamErr = `${j.error.code || ''} ${j.error.status || ''} ${String(j.error.message || '').slice(0, 80)}`.trim();
+            return;
+          }
           const cand = j?.candidates?.[0];
+          if (cand?.finishReason) lastFinish = cand.finishReason;
           const hasText = (cand?.content?.parts || []).some((p) => p.text && !p.thought && p.text.trim());
           if (hasText) {
             gotText = true;
@@ -1032,7 +1048,10 @@ export default async function handler(req) {
         if (midBlock && gotText) return { cut: midBlock, sofar };
         if (gotText && !finished) return { cut: 'INTERRUPTED', sofar }; // connexion Google coupée en cours de route
         if (cont) return gotText ? 'ok' : block ? `suite bloquée (${block})` : 'suite vide';
-        return started ? 'ok' : block ? `réponse bloquée par le filtre Google (${block})` : 'réponse vide';
+        if (started) return 'ok';
+        if (block) return `réponse bloquée par le filtre Google (${block})`;
+        if (streamErr) return `erreur Google ${streamErr}`;
+        return `réponse vide${lastFinish ? ' (' + lastFinish + ')' : ''}`;
       };
 
       /** Réponse coupée en plein milieu : on demande la SUITE (formulation neutre) et on la colle à la suite du texte déjà affiché */
@@ -1087,7 +1106,8 @@ export default async function handler(req) {
       let blockedByFilter = false;
       // VITESSE : la recherche Google intégrée de Gemini ajoute souvent 10 à 40 s.
       // Si BOUA a déjà ses propres résultats (actualités ou données temps réel), on répond directement avec eux.
-      const useGoogle = wantWeb && !realtimeHit && webResults.length < 3;
+      // Question d'actualité sans résultats BOUA : la recherche Google de Gemini prend le relais
+      const useGoogle = (wantWeb || Boolean(body.mustSearch)) && !realtimeHit && webResults.length < 3;
       if (!isImage) logEvent('preparation', `actualites=${webResults.length} tempsreel=${realtimeHit} google=${useGoogle} ${Date.now() - startedAt} ms`);
       for (const engine of order) {
         /* ---------- Gemini : clés × modèles ---------- */
@@ -1126,7 +1146,24 @@ export default async function handler(req) {
                     await finishCutAnswer(m, outcome.sofar, outcome.cut);
                     return;
                   }
+                  if (/^réponse vide/.test(outcome) && /gemini-3|latest/.test(m) && !noThinkCfg.has(m)) {
+                    noThinkCfg.add(m);
+                    logEvent('vide-avec-reflexion', `${m} ${outcome} → relance sans réglage`);
+                    const r2 = await callOnce(apiKeys[k], m, useGoogle);
+                    if (r2.ok) {
+                      const o2 = await pipeGemini(r2, m, useGoogle);
+                      if (o2 === 'ok') {
+                        lastGood[speed] = m;
+                        return;
+                      }
+                      if (o2 && o2.cut) {
+                        await finishCutAnswer(m, o2.sofar, o2.cut);
+                        return;
+                      }
+                    }
+                  }
                   tried.push(`Gemini ${m} → ${outcome}`);
+                  logEvent('modele-echec', `${m} → ${outcome}`);
                   if (/bloquée/.test(outcome)) blockedByFilter = true;
                   if (++emptyTries >= 2) break outer; // inutile d'insister : moteur suivant / reformulation
                   continue;
