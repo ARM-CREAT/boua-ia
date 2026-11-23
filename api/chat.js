@@ -488,6 +488,40 @@ export async function timeFor(city, lang) {
   return { text: `HEURE LOCALE à ${g.name} (${g.country}, fuseau ${g.tz}) : ${now}.`, source: null };
 }
 
+const CURRENCY_NAMES = [
+  [/francs? suisses?|\bchf\b/i, 'CHF'], [/f\s?cfa|franc?s? cfa|\bcfa\b|\bxof\b/i, 'XOF'], [/\bxaf\b/i, 'XAF'], [/livres? sterling|\bgbp\b|£/i, 'GBP'],
+  [/euros?|\beur\b|€/i, 'EUR'], [/dollars? canadiens?|\bcad\b/i, 'CAD'], [/dollars?|\busd\b|\$/i, 'USD'], [/dirhams?|\bmad\b/i, 'MAD'], [/\byens?\b|\bjpy\b/i, 'JPY'],
+  [/yuans?|\bcny\b|renminbi/i, 'CNY'], [/nairas?|\bngn\b/i, 'NGN'], [/cedis?|\bghs\b/i, 'GHS'], [/dinars? alg[ée]riens?|\bdzd\b/i, 'DZD'], [/dinars? tunisiens?|\btnd\b/i, 'TND'],
+  [/roupies?|\binr\b/i, 'INR'], [/reals?|\bbrl\b/i, 'BRL'], [/pesos? mexicains?|\bmxn\b/i, 'MXN'],
+];
+const curCode = (t) => (CURRENCY_NAMES.find(([re]) => re.test(t)) || [])[1] || '';
+const PLACE_STOP = /\s+(?:aujourd.hui|demain|ce\s|cette|cet\s|maintenant|actuellement|en ce moment|today|tomorrow|now|right now|this|hoy|mañana|ahora|esta|este|svp|s'il)\b.*$/i;
+const cleanPlace = (p) => String(p || '').replace(/[?!.,;:«»"]+.*$/, '').replace(PLACE_STOP, '').trim().slice(0, 60);
+
+/** Lecture instantanée de la question (sans appel IA) : météo, heure, conversion */
+export function quickRealtimeIntents(q) {
+  const out = { meteo: [], devise: null, heure: [] };
+  if (/(po[èe]me|histoire|chanson|conte|r[ée]dige|[ée]cris|code|script|fonction|programme)/i.test(q)) return null; // création, pas une demande de données
+  const w =
+    q.match(/(?:m[ée]t[ée]o|temps|temp[ée]rature|pleut|pluie|neige|weather|forecast|tiempo|clima|lluvia|llueve)[^?!]*?(?:^|\s)(?:à|a|au|aux|en|sur|pour|in|at|for|para|de)\s+([^?!]{2,60})/i) ||
+    q.match(/(?:m[ée]t[ée]o|weather|tiempo|clima)\s+([^?!\s][^?!]{1,40})$/i);
+  if (w && !/^(fait|il|libre|pass|r[ée]el|aujourd|demain)/i.test(cleanPlace(w[1])) && cleanPlace(w[1])) out.meteo.push(cleanPlace(w[1]));
+  const h = q.match(/(?:quelle heure|qu.elle heure|heure (?:actuelle|locale)|qu[ée] hora|what time)[^?!]*?(?:^|\s)(?:à|a|au|en|in|at|de)\s+([^?!]{2,60})/i);
+  if (h) out.heure.push(cleanPlace(h[1]));
+  const c = q.match(/(\d[\d\s.,]*)?\s*([a-zà-ÿ$€£ ]{1,25}?)\s+(?:en|à|a|in|to|vers|contre|=)\s+([a-zà-ÿ$€£ ]{1,25})/i);
+  if (c && /(convert|conversion|combien|cu[áa]nto|how much|taux|change|cambio|vaut|valent|\d)/i.test(q)) {
+    const from = curCode(c[2]);
+    const to = curCode(c[3]);
+    if (from && to && from !== to) out.devise = { de: from, vers: to, montant: c[1] ? Number(String(c[1]).replace(/\s/g, '').replace(',', '.')) || 1 : 1 };
+  }
+  if (!out.devise && /(taux de change|tipo de cambio|exchange rate|cours (?:de l.|du))/i.test(q)) {
+    const codes = [...new Set(CURRENCY_NAMES.flatMap(([re, code]) => (re.test(q) ? [code] : [])))];
+    if (codes.length >= 2) out.devise = { de: codes[0], vers: codes[1], montant: 1 };
+    else if (codes.length === 1) out.devise = codes[0] === 'EUR' ? { de: 'EUR', vers: 'USD', montant: 1 } : { de: codes[0], vers: 'EUR', montant: 1 };
+  }
+  return out.meteo.length || out.heure.length || out.devise ? out : null;
+}
+
 /** L'IA (modèle rapide) extrait les demandes de données en temps réel de la question */
 async function extractRealtimeIntents(question, apiKeys, candidates) {
   const prompt = `Analyse cette question et réponds UNIQUEMENT en JSON : {"meteo":["ville",...],"devise":{"de":"EUR","vers":"USD","montant":1} ou null,"heure":["ville",...]}. Codes ISO 4217 pour les devises (FCFA = XOF). Listes vides si non demandé. Question : « ${question} »`;
@@ -564,7 +598,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 17, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 18, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -711,7 +745,7 @@ export default async function handler(req) {
 
   // 3. Appel Gemini : pour chaque clé, essaie les modèles dans l'ordre jusqu'à obtenir une réponse
   const wantWeb = Boolean(body.web || body.webSearch || body.search || body.googleSearch) && !isImage;
-  const ATTEMPT_TIMEOUT_MS = 20000; // délai max d'attente d'un modèle avant de passer au suivant
+  const ATTEMPT_TIMEOUT_MS = 12000; // délai max d'attente d'un modèle avant de passer au suivant
   const callOnce = async (key, model, withWeb, override) => {
     const payload = { contents: override || contents };
     if (system && !isImage) payload.systemInstruction = { parts: [{ text: system }] };
@@ -819,19 +853,30 @@ export default async function handler(req) {
 
     try {
       /* ---------- Données en temps réel : météo, devises, heure (chiffres exacts + sources) ---------- */
+      let realtimeHit = false;
       if (!isImage && apiKeys.length && candidates.length) {
         const lastUserRt = [...contents].reverse().find((c) => c.role === 'user');
         const q = String(body.query || lastUserRt?.parts?.map((p) => p.text || '').join(' ') || '').slice(0, 500);
         if (REALTIME_RE.test(q)) {
           await send(`data: ${JSON.stringify({ boua: { progress: 'Consultation des données en temps réel…' } })}\n\n`);
           // Limite stricte : jamais plus de 5 s d'attente avant que la réponse commence
+          const lang = String(body.lang || 'fr');
+          const quick = quickRealtimeIntents(q);
           const data = await Promise.race([
-            extractRealtimeIntents(q, apiKeys, candidates).then((intents) => fetchRealtimeData(intents, String(body.lang || 'fr'))),
-            new Promise((r) => setTimeout(() => r([]), 5000)),
+            (async () => {
+              // 1) lecture instantanée ; 2) si rien de trouvé, l'IA analyse la question
+              let d = quick ? await fetchRealtimeData(quick, lang) : [];
+              if (!d.length) d = await fetchRealtimeData(await extractRealtimeIntents(q, apiKeys, candidates), lang);
+              return d;
+            })(),
+            new Promise((r) => setTimeout(() => r([]), 6000)),
           ]).catch(() => []);
           if (data.length && lastUserRt) {
+            realtimeHit = true;
+            // Les chiffres exacts remplacent les titres d'actualité (souvent anciens) : réponse plus juste et plus rapide
+            webResults = [];
             lastUserRt.parts = [
-              ...lastUserRt.parts,
+              ...lastUserRt.parts.filter((p) => !String(p.text || '').startsWith('\n\n[RÉSULTATS DE RECHERCHE WEB RÉELS')),
               { text: `\n\n[DONNÉES EN TEMPS RÉEL — valeurs exactes obtenues à l'instant. Utilise CES chiffres (n'en invente aucun) et cite la source :]\n${data.map((d) => d.text).join('\n\n')}` },
             ];
             for (const d of data) if (d.source && !webResults.some((w) => w.uri === d.source.uri)) webResults.unshift({ ...d.source, source: '' });
@@ -1012,6 +1057,9 @@ export default async function handler(req) {
       };
 
       let blockedByFilter = false;
+      // VITESSE : la recherche Google intégrée de Gemini ajoute souvent 10 à 40 s.
+      // Si BOUA a déjà ses propres résultats (actualités ou données temps réel), on répond directement avec eux.
+      const useGoogle = wantWeb && !realtimeHit && webResults.length < 3;
       for (const engine of order) {
         /* ---------- Gemini : clés × modèles ---------- */
         if (engine === 'gemini') {
@@ -1022,9 +1070,9 @@ export default async function handler(req) {
           outer: for (let k = 0; k < apiKeys.length; k++) {
             for (const m of candidates) {
               try {
-                let r = await callOnce(apiKeys[k], m, wantWeb);
+                let r = await callOnce(apiKeys[k], m, useGoogle);
                 let preMsg = '';
-                if (!r.ok && wantWeb && (r.status === 400 || r.status === 429 || r.status === 504)) {
+                if (!r.ok && useGoogle && (r.status === 400 || r.status === 429 || r.status === 504)) {
                   preMsg = await readErr(r);
                   if (!/limit:\s*0\b|no longer available|not found|not supported/i.test(preMsg)) {
                     r = await callOnce(apiKeys[k], m, false); // recherche Google indisponible : on répond sans
@@ -1038,7 +1086,7 @@ export default async function handler(req) {
                   break outer;
                 }
                 if (r.ok) {
-                  const outcome = await pipeGemini(r, m, wantWeb && r.__web !== false);
+                  const outcome = await pipeGemini(r, m, useGoogle && r.__web !== false);
                   if (outcome === 'ok') {
                     lastGood[speed] = m;
                     return;
