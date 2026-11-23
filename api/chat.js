@@ -135,6 +135,14 @@ function rateLimited(uid, max = RATE_LIMIT_PER_MIN) {
 let modelCache = { text: [], image: [], video: [], exp: 0 };
 // Modèles temporairement écartés (quota nul, retirés…) pour aller directement vers un modèle qui répond
 const badModels = new Map(); // nom -> horodatage de fin d'exclusion
+// Journal des derniers événements (sans aucun texte des utilisateurs) — visible sur la page de diagnostic
+const EVENTS = [];
+const logEvent = (ev, info = '') => {
+  EVENTS.push({ heure: new Date().toISOString().slice(11, 19), ev, info: String(info).slice(0, 160) });
+  if (EVENTS.length > 20) EVENTS.shift();
+};
+// Modèles qui refusent le réglage de réflexion (thinkingConfig)
+const noThinkCfg = new Set();
 const isBad = (m) => (badModels.get(m) || 0) > Date.now();
 // Dernier modèle ayant répondu : réessayé en premier (réponses plus rapides, moins d'essais inutiles)
 const lastGood = { fast: '', quality: '' };
@@ -598,7 +606,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 18, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 19, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -751,7 +759,11 @@ export default async function handler(req) {
     if (system && !isImage) payload.systemInstruction = { parts: [{ text: system }] };
     payload.generationConfig = isImage
       ? { responseModalities: ['TEXT', 'IMAGE'], ...(body.aspectRatio ? { imageConfig: { aspectRatio: String(body.aspectRatio).slice(0, 8) } } : {}) }
-      : { temperature, maxOutputTokens: Math.min(65536, Math.max(1024, Number(body.maxTokens) || (speed === 'fast' ? 8192 : 16384))) };
+      : {
+          temperature,
+          maxOutputTokens: Math.min(65536, Math.max(1024, Number(body.maxTokens) || (speed === 'fast' ? 16384 : 32768))),
+          ...(/gemini-3|latest/.test(model) && !noThinkCfg.has(model) ? { thinkingConfig: { thinkingLevel: speed === 'fast' || override ? 'low' : 'medium' } } : {}),
+        };
     if (!isImage) payload.safetySettings = SAFETY_SETTINGS; // actualité, politique, conflits : informer sans bloquer
     if (withWeb) payload.tools = [{ google_search: {} }];
     const url = isImage ? `${GEMINI_BASE}/models/${encodeURIComponent(model)}:generateContent` : `${GEMINI_BASE}/models/${encodeURIComponent(model)}:streamGenerateContent?alt=sse`;
@@ -759,7 +771,17 @@ export default async function handler(req) {
     const timer = setTimeout(() => ctrl.abort(), isImage ? 90000 : ATTEMPT_TIMEOUT_MS);
     try {
       // SÉCURITÉ : la clé part dans un en-tête, jamais dans l'URL
-      return await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(payload), signal: ctrl.signal });
+      let res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(payload), signal: ctrl.signal });
+      if (res.status === 400 && payload.generationConfig?.thinkingConfig) {
+        const msg = await res.clone().text().catch(() => '');
+        if (/thinking/i.test(msg)) {
+          noThinkCfg.add(model); // ce modèle n'accepte pas le réglage : on le retire et on relance
+          logEvent('reglage-reflexion-refuse', model);
+          delete payload.generationConfig.thinkingConfig;
+          res = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'x-goog-api-key': key }, body: JSON.stringify(payload), signal: ctrl.signal });
+        }
+      }
+      return res;
     } catch (e) {
       if (e.name === 'AbortError') return new Response(JSON.stringify({ error: { message: `${model} trop lent (délai dépassé)` } }), { status: 504 });
       throw e;
@@ -970,6 +992,7 @@ export default async function handler(req) {
           // Coupure en pleine réponse (filtre ou limite de longueur) : on ne transmet pas la fin de flux, on complétera ensuite
           if ((started || hasText) && cand?.finishReason && (BLOCK_RE.test(cand.finishReason) || cand.finishReason === 'MAX_TOKENS')) {
             midBlock = cand.finishReason;
+            if (!hasText && cand.finishReason !== 'MAX_TOKENS') block = cand.finishReason;
             if (hasText) {
               const textOnly = { candidates: [{ content: { role: 'model', parts: cand.content.parts.filter((p) => p.text && !p.thought) } }] };
               if (!started) {
@@ -1043,6 +1066,10 @@ export default async function handler(req) {
             if (!r.ok) continue;
             const out = await pipeGemini(r, models[attempt % models.length], false, true);
             if (out === 'ok') return true;
+            if (out === 'suite vide') {
+              logEvent('suite-vide', 'réponse déjà complète');
+              return true; // le modèle n'a rien à ajouter : la réponse était terminée
+            }
             if (out && out.cut) {
               sofar += out.sofar;
               attempt = out.cut === 'MAX_TOKENS' || out.cut === 'INTERRUPTED' ? Math.max(-1, attempt - 1) : attempt; // longue réponse qui avance : on continue
@@ -1051,6 +1078,7 @@ export default async function handler(req) {
             }
           } catch (e) {}
         }
+        logEvent('suite-impossible', reason);
         await send(`data: ${JSON.stringify({ boua: { incomplete: true } })}\n\n`);
         if (!lengthCut) await send(`data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: '\n\n> ⚠️ La suite de cette réponse a été bloquée par le filtre de sécurité de Google. Cliquez sur « ▶ Continuer » ou reformulez la question.' }] } }] })}\n\n`);
         return true;
@@ -1060,6 +1088,7 @@ export default async function handler(req) {
       // VITESSE : la recherche Google intégrée de Gemini ajoute souvent 10 à 40 s.
       // Si BOUA a déjà ses propres résultats (actualités ou données temps réel), on répond directement avec eux.
       const useGoogle = wantWeb && !realtimeHit && webResults.length < 3;
+      if (!isImage) logEvent('preparation', `actualites=${webResults.length} tempsreel=${realtimeHit} google=${useGoogle} ${Date.now() - startedAt} ms`);
       for (const engine of order) {
         /* ---------- Gemini : clés × modèles ---------- */
         if (engine === 'gemini') {
@@ -1089,9 +1118,11 @@ export default async function handler(req) {
                   const outcome = await pipeGemini(r, m, useGoogle && r.__web !== false);
                   if (outcome === 'ok') {
                     lastGood[speed] = m;
+                    logEvent('ok', `${m} ${speed}${useGoogle && r.__web !== false ? ' +google' : ''} ${Date.now() - startedAt} ms`);
                     return;
                   }
                   if (outcome && outcome.cut) {
+                    logEvent('reponse-coupee', `${m} ${outcome.cut} (${outcome.sofar.length} car.)`);
                     await finishCutAnswer(m, outcome.sofar, outcome.cut);
                     return;
                   }
@@ -1107,6 +1138,7 @@ export default async function handler(req) {
                 else if (reason === 'quota épuisé') markBad(m, 60 * 1000);
                 else if (reason === 'trop lent') markBad(m, 10 * 60 * 1000);
                 tried.push(`Gemini ${m}${apiKeys.length > 1 ? ` (clé ${k + 1})` : ''} → ${reason}`);
+                logEvent('modele-echec', `${m} → ${reason}`);
                 if (r.status === 400 && reason !== 'modèle indisponible') break outer; // requête refusée : on passe au moteur suivant
                 if (r.status === 401 || r.status === 403) break; // clé suivante
               } catch (e) {
@@ -1217,6 +1249,7 @@ export default async function handler(req) {
 
       // Tous les moteurs ont échoué
       const summary = tried.join(' • ');
+      logEvent('echec', summary);
       console.error('[BOUA Cloud] Échec de tous les moteurs :', summary, '—', lastMsg);
       let message = `Aucun moteur n'a pu répondre. ${summary ? 'Détail : ' + summary + '. ' : ''}Dernier message : ${lastMsg}`;
       if (blockedByFilter || tried.some((t) => /bloquée/.test(t))) {
