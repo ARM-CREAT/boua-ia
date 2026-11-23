@@ -440,6 +440,10 @@ async function searchWikipedia(query, lang) {
 
 // Seul le contenu à risque ÉLEVÉ est bloqué : les sujets d'actualité (guerre, terrorisme, politique, élections) restent traités
 const SAFETY_SETTINGS = ['HARM_CATEGORY_HARASSMENT', 'HARM_CATEGORY_HATE_SPEECH', 'HARM_CATEGORY_SEXUALLY_EXPLICIT', 'HARM_CATEGORY_DANGEROUS_CONTENT', 'HARM_CATEGORY_CIVIC_INTEGRITY'].map((category) => ({ category, threshold: 'BLOCK_ONLY_HIGH' }));
+const NO_TOOLS_NOTE =
+  "IMPORTANT : dans cette réponse tu n'as AUCUN outil ni aucune fonction à appeler (pas de recherche Google, pas de navigation). N'essaie jamais d'appeler un outil. Réponds directement en texte, en t'appuyant sur les résultats de recherche fournis dans la question s'il y en a ; sinon sur tes connaissances, en précisant brièvement qu'elles peuvent dater.";
+// Questions d'actualité détectées par le serveur (même si le site ne l'a pas signalé)
+const NEWSY_RE = /(actuel|actuelle|actuellement|aujourd.hui|en ce moment|r[ée]cent|derni[èe]res? (nouvelles|infos|informations)|actualit|news|situation (au|du|de la|en)|que se passe|qu.est-ce qui se passe|hoy|actualidad|[úu]ltimas noticias|latest|current|today)/i;
 const BLOCK_RE = /SAFETY|PROHIBITED|BLOCKLIST|SPII|RECITATION|OTHER|LANGUAGE/;
 
 /* ---------------- DONNÉES EN TEMPS RÉEL (gratuites, sans clé) ---------------- */
@@ -615,7 +619,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 21, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 22, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -765,7 +769,9 @@ export default async function handler(req) {
   const ATTEMPT_TIMEOUT_MS = 12000; // délai max d'attente d'un modèle avant de passer au suivant
   const callOnce = async (key, model, withWeb, override) => {
     const payload = { contents: override || contents };
-    if (system && !isImage) payload.systemInstruction = { parts: [{ text: system }] };
+    // Sans outil de recherche : on interdit explicitement tout appel de fonction
+    // (sinon le modèle tente une « recherche Google » inexistante → MALFORMED_FUNCTION_CALL, réponse vide)
+    if (!isImage) payload.systemInstruction = { parts: [{ text: (system ? system + '\n\n' : '') + (withWeb ? '' : NO_TOOLS_NOTE) }] };
     payload.generationConfig = isImage
       ? { responseModalities: ['TEXT', 'IMAGE'], ...(body.aspectRatio ? { imageConfig: { aspectRatio: String(body.aspectRatio).slice(0, 8) } } : {}) }
       : {
@@ -809,7 +815,9 @@ export default async function handler(req) {
 
   // Recherche web BOUA (indépendante de Gemini) pour les questions d'actualité
   let webResults = [];
-  if (!isImage && (body.mustSearch || (wantWeb && body.alwaysSearch))) {
+  const lastUserQ = [...contents].reverse().find((c) => c.role === 'user');
+  const newsy = !isImage && (Boolean(body.mustSearch) || NEWSY_RE.test(String(body.query || lastUserQ?.parts?.map((p) => p.text || '').join(' ') || '').slice(0, 600)));
+  if (!isImage && (newsy || (wantWeb && body.alwaysSearch))) {
     const lastUser = [...contents].reverse().find((c) => c.role === 'user');
     const userText = String(body.query || lastUser?.parts?.map((p) => p.text || '').join(' ') || '');
     webResults = await searchNews(userText, String(body.lang || 'fr'));
@@ -1107,7 +1115,7 @@ export default async function handler(req) {
       // VITESSE : la recherche Google intégrée de Gemini ajoute souvent 10 à 40 s.
       // Si BOUA a déjà ses propres résultats (actualités ou données temps réel), on répond directement avec eux.
       // Question d'actualité sans résultats BOUA : la recherche Google de Gemini prend le relais
-      const useGoogle = (wantWeb || Boolean(body.mustSearch)) && !realtimeHit && webResults.length < 3;
+      const useGoogle = (wantWeb || newsy) && !realtimeHit && webResults.length < 3;
       if (!isImage) logEvent('preparation', `actualites=${webResults.length} tempsreel=${realtimeHit} google=${useGoogle} ${Date.now() - startedAt} ms`);
       for (const engine of order) {
         /* ---------- Gemini : clés × modèles ---------- */
@@ -1118,6 +1126,7 @@ export default async function handler(req) {
           let emptyTries = 0;
           outer: for (let k = 0; k < apiKeys.length; k++) {
             for (const m of candidates) {
+              if (Date.now() - startedAt > 60000) break outer; // jamais plus d'une minute d'essais
               try {
                 const g = useGoogle && !/lite/.test(m);
                 let r = await callOnce(apiKeys[k], m, g);
