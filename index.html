@@ -3662,7 +3662,7 @@ contenu complet du document
         }
         if (json?.boua?.progress) {
           // Avancement de la recherche approfondie, affiché jusqu'à l'arrivée du texte
-          if (!text && onDelta) onDelta(`> 🔎 **Recherche approfondie** — ${json.boua.progress}`);
+          if (!text && onDelta) onDelta(/^Consultation des données/.test(json.boua.progress) ? `> ⚡ ${json.boua.progress}` : `> 🔎 **Recherche approfondie** — ${json.boua.progress}`);
           return;
         }
         if (json?.boua) {
