@@ -619,7 +619,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 22, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 23, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -1042,19 +1042,25 @@ export default async function handler(req) {
           }
           await send(`data: ${d}\n\n`);
         };
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          let k;
-          while ((k = buf.indexOf('\n')) >= 0) {
-            await handle(buf.slice(0, k));
-            buf = buf.slice(k + 1);
+        let broken = false; // vraie coupure réseau (et non une fin de flux normale)
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            let k;
+            while ((k = buf.indexOf('\n')) >= 0) {
+              await handle(buf.slice(0, k));
+              buf = buf.slice(k + 1);
+            }
           }
+        } catch (e) {
+          broken = true;
         }
         if (buf) await handle(buf);
         if (midBlock && gotText) return { cut: midBlock, sofar };
-        if (gotText && !finished) return { cut: 'INTERRUPTED', sofar }; // connexion Google coupée en cours de route
+        // Certains modèles n'envoient pas de « finishReason » : une fin de flux normale = réponse terminée
+        if (gotText && !finished && broken) return { cut: 'INTERRUPTED', sofar }; // connexion Google coupée en cours de route
         if (cont) return gotText ? 'ok' : block ? `suite bloquée (${block})` : 'suite vide';
         if (started) return 'ok';
         if (block) return `réponse bloquée par le filtre Google (${block})`;
