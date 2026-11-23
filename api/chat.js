@@ -619,7 +619,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 23, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 24, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -1059,8 +1059,14 @@ export default async function handler(req) {
         }
         if (buf) await handle(buf);
         if (midBlock && gotText) return { cut: midBlock, sofar };
-        // Certains modèles n'envoient pas de « finishReason » : une fin de flux normale = réponse terminée
-        if (gotText && !finished && broken) return { cut: 'INTERRUPTED', sofar }; // connexion Google coupée en cours de route
+        // Pas de « finishReason » : soit une vraie coupure, soit un modèle qui ne l'envoie pas.
+        // On regarde la fin du texte : une réponse terminée finit par </suggestions> ou par une phrase complète.
+        if (gotText && !finished) {
+          const tail = sofar.trimEnd();
+          const looksDone = /<\/suggestions>\s*$/i.test(tail) || (tail.length > 600 && /[.!?)»\]`*]\s*$/.test(tail));
+          // (en continuation, on accepte la suite telle quelle pour ne jamais tourner en boucle)
+          if (broken || (!looksDone && !cont)) return { cut: 'INTERRUPTED', sofar };
+        }
         if (cont) return gotText ? 'ok' : block ? `suite bloquée (${block})` : 'suite vide';
         if (started) return 'ok';
         if (block) return `réponse bloquée par le filtre Google (${block})`;
