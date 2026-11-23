@@ -3269,7 +3269,7 @@ contenu complet du document
         ctx.knowledge
           ? `BASE DE CONNAISSANCES (extraits des documents de l'utilisateur ; cite la source entre crochets, ex. [contrat.pdf]) :\n${ctx.knowledge}`
           : '',
-        `Termine par 3 suggestions courtes de suivi encadrées par :\n<suggestions>\nSuggestion 1\nSuggestion 2\nSuggestion 3\n</suggestions>`,
+        `Termine par 3 vraies questions de suivi, courtes et liées au sujet (une par ligne, sans numéro), encadrées par <suggestions> et </suggestions>.`,
       ]
         .filter(Boolean)
         .join('\n\n');
@@ -3892,7 +3892,7 @@ contenu complet du document
         suggestions = sm[1]
           .split('\n')
           .map((l) => l.replace(/^[-*•\d.)\s]+/, '').trim())
-          .filter(Boolean)
+          .filter((l) => l && !/^(suggestion|question)\s*\d*$/i.test(l))
           .slice(0, 3);
         text = text.replace(sm[0], '').trim();
       }
