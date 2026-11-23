@@ -126,7 +126,11 @@
     #btn-open-brain,              /* Cerveau IA */
     #btn-toggle-kb,               /* Bouton 📚 base de connaissances */
     #welcome-demos,               /* Boutons de démo de l'accueil */
-    #welcome-engines              /* Bandeau des moteurs de l'accueil */
+    #welcome-engines,             /* Bandeau des moteurs de l'accueil */
+    #btn-open-account,            /* Compte & synchronisation (e-mail affiché) — la connexion reste active en arrière-plan */
+    #btn-sidebar-settings,        /* Multi-Moteurs IA & Clés */
+    #btn-header-engine,           /* Bouton « ⚡ BOUA Cloud » de l'en-tête */
+    .msg-engine-badge             /* Étiquette « BOUA Cloud · Gemini » sur les réponses */
     { display: none !important; }
 
     /* Animation points de chargement */
@@ -5695,7 +5699,7 @@ contenu complet du document
                     <span class="text-xs font-bold text-emerald-400 shrink-0">BOUA AI</span>
                     ${
                       m.engineUsed && ENGINE_META[m.engineUsed]
-                        ? `<span class="text-[10px] font-mono px-2 py-0.5 rounded-md bg-zinc-950 border border-zinc-800 text-amber-300 truncate">${ENGINE_META[m.engineUsed].icon} ${ENGINE_META[m.engineUsed].short}${m.cloudEngine ? ' · ' + escapeHtml(m.cloudEngine) : ''}${
+                        ? `<span class="msg-engine-badge text-[10px] font-mono px-2 py-0.5 rounded-md bg-zinc-950 border border-zinc-800 text-amber-300 truncate">${ENGINE_META[m.engineUsed].icon} ${ENGINE_META[m.engineUsed].short}${m.cloudEngine ? ' · ' + escapeHtml(m.cloudEngine) : ''}${
                             m.fallbackFrom && ENGINE_META[m.fallbackFrom]
                               ? ` (↻ ${ENGINE_META[m.fallbackFrom].short})`
                               : ''
