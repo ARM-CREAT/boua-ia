@@ -3055,6 +3055,24 @@ self.addEventListener('fetch', (e) => {
 </video_storyboard>
 Règles : « heading » (3 à 6 mots) et « subtitle » (une phrase de 12 mots maximum) sont écrits en ${langName}. « visual » décrit précisément en anglais l'image de la scène (sujet, lieu, lumière, cadrage, style) et garde le même style visuel d'une scène à l'autre. Les scènes racontent une histoire avec un début, un milieu et une fin. N'invente aucun fait réel douteux. Après la balise, écris une seule phrase qui présente la vidéo.`;
 
+    /** Lit le scénario même si l'IA l'entoure de ```json, ajoute une virgule en trop ou oublie la balise */
+    function parseStoryboardText(txt) {
+      let raw = String(txt || '');
+      const tag = raw.match(/<video_storyboard>([\s\S]*?)(<\/video_storyboard>|$)/i);
+      if (tag) raw = tag[1];
+      raw = raw.replace(/```(?:json)?/gi, '');
+      const a = raw.indexOf('{');
+      const b = raw.lastIndexOf('}');
+      if (a < 0 || b <= a) return null;
+      let js = raw.slice(a, b + 1).replace(/[\u201c\u201d]/g, '"').replace(/,\s*([}\]])/g, '$1');
+      try {
+        const o = JSON.parse(js);
+        return o && Array.isArray(o.scenes) && o.scenes.length ? o : null;
+      } catch (e) {
+        return null;
+      }
+    }
+
     /** Scénario de secours si le texte n'a pas pu être écrit */
     function fallbackStoryboard(q) {
       const subject = String(q || 'BOUA AI').replace(/^(fais|cr[ée]e|g[ée]n[èe]re|r[ée]alise)[- ]?(moi)?\s+(une?\s+)?(petite\s+|courte\s+)?(vid[ée]o|clip|animation)\s*(de|du|des|sur|d'|pour)?\s*/i, '').slice(0, 120) || 'BOUA AI';
@@ -3370,24 +3388,33 @@ Règles : « heading » (3 à 6 mots) et « subtitle » (une phrase de 12 mots m
       let intro = '';
       if (!sb) {
         say('🎬 **Création de votre vidéo…**\n\n> ✍️ Étape 1/3 — Écriture du scénario…');
-        try {
-          const langName = I18N[state.lang]?.aiLangName || 'Français';
-          const txt = await cloudText({ contents: [{ role: 'user', parts: [{ text: queryText }] }], systemInstruction: VIDEO_SB_PROMPT(langName), speed: 'fast', lang: state.lang, maxTokens: 4096, temperature: 0.8, engine: 'auto' }, signal);
-          const parsed = parseAiReply(txt);
-          if (parsed.videoSb && Array.isArray(parsed.videoSb.scenes) && parsed.videoSb.scenes.length) {
+        const langName = I18N[state.lang]?.aiLangName || 'Français';
+        let vsb = null;
+        let txt = '';
+        for (let attempt = 0; attempt < 2 && !vsb; attempt++) {
+          try {
+            const extra = attempt ? '\n\nIMPORTANT : réponds UNIQUEMENT avec la balise <video_storyboard> contenant du JSON valide, sans aucun autre texte.' : '';
+            txt = await cloudText({ contents: [{ role: 'user', parts: [{ text: queryText }] }], systemInstruction: VIDEO_SB_PROMPT(langName) + extra, speed: 'fast', lang: state.lang, maxTokens: 4096, temperature: attempt ? 0.4 : 0.8, engine: 'auto', noSearch: true }, signal);
+            vsb = parseStoryboardText(txt);
+          } catch (e) {
+            if (e.name === 'AbortError') throw e;
+          }
+        }
+        {
+          if (vsb) {
             sb = {
-              title: String(parsed.videoSb.title || 'Vidéo BOUA AI').slice(0, 120),
-              scenes: parsed.videoSb.scenes.slice(0, 6).map((s) => ({
+              title: String(vsb.title || 'Vidéo BOUA AI').slice(0, 120),
+              scenes: vsb.scenes.slice(0, 6).map((s) => ({
                 heading: String(s.heading || '').slice(0, 80),
                 subtitle: String(s.subtitle || '').slice(0, 160),
                 visual: String(s.visual || s.heading || '').slice(0, 600),
                 colors: Array.isArray(s.colors) && s.colors.every((c) => /^#[0-9a-f]{3,8}$/i.test(c)) ? s.colors.slice(0, 2) : undefined,
               })),
             };
-            intro = txt.replace(/<video_storyboard>[\s\S]*?<\/video_storyboard>/i, '').replace(/<suggestions>[\s\S]*$/i, '').trim().slice(0, 400);
+            intro = txt.replace(/<video_storyboard>[\s\S]*?<\/video_storyboard>/i, '').replace(/```[\s\S]*?```/g, '').replace(/<suggestions>[\s\S]*$/i, '').trim();
+            if (/[{}]/.test(intro)) intro = '';
+            intro = intro.slice(0, 400);
           }
-        } catch (e) {
-          if (e.name === 'AbortError') throw e;
         }
         if (!sb) sb = fallbackStoryboard(queryText);
       }
