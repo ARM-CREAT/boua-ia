@@ -744,11 +744,16 @@ export async function fetchRealtimeData(intents, lang) {
 }
 
 /** Image gratuite sans clé (Pollinations) — renvoie { mimeType, data(base64) } ou null */
-async function freeImage(prompt, aspectRatio, seed) {
+async function freeImage(prompt, aspectRatio, seed, retry = true) {
   const dims = { '1:1': [1024, 1024], '16:9': [1280, 720], '9:16': [720, 1280], '4:3': [1024, 768] }[aspectRatio] || [1024, 1024];
   const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(String(prompt).slice(0, 800))}?width=${dims[0]}&height=${dims[1]}&nologo=true&safe=true&seed=${seed || Math.floor(Math.random() * 1e6)}`;
   try {
-    const r = await timedFetch(url, 70000, { headers: { 'User-Agent': 'BOUA-Cloud/1.0' } });
+    const r = await timedFetch(url, 45000, { headers: { 'User-Agent': 'BOUA-Cloud/1.0' } });
+    // Service gratuit occupé (trop de demandes à la fois) : une seconde chance après une courte pause
+    if (retry && (r.status === 429 || r.status >= 500)) {
+      await new Promise((res) => setTimeout(res, 2000));
+      return freeImage(prompt, aspectRatio, (Number(seed) || 1) + 101, false);
+    }
     const type = (r.headers.get('content-type') || '').split(';')[0];
     if (!r.ok || !/^image\/(png|jpeg|webp)$/.test(type)) return null;
     const buf = new Uint8Array(await r.arrayBuffer());
@@ -788,7 +793,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 30, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 31, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
