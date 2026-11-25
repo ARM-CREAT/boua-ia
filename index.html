@@ -3011,6 +3011,469 @@ self.addEventListener('fetch', (e) => {
       await Promise.all([worker(), worker()]);
     }
 
+    /* ================= v14 : DESSINS & VIDÉOS DIRECTEMENT DANS LA DISCUSSION ================= */
+    const liveVideos = new Map(); // URL blob → vidéo encore en mémoire
+
+    /** Reconnaît une demande de dessin / image / vidéo écrite normalement dans la discussion */
+    function detectCreativeIntent(text) {
+      const t = String(text || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[̀-ͯ]/g, '')
+        .replace(/[’']/g, ' ')
+        .trim();
+      if (!t || t.length > 600) return null;
+      // Questions sur des vidéos existantes, analyse, code… : pas une création
+      if ((/\b(cherche|recherche|trouve|resume|resumer|analyse|explique|transcri|traduis|sous-titre|telecharge)\b/.test(t) || /\b(sur|de|dans|from|on|en)\s+(youtube|tiktok|instagram|facebook|twitter|x)\b/.test(t)) && !/\b(cree|creer|fais|genere|generer|realise|realiser)\b[^.?!]{0,25}\b(video|clip|film|animation)\b/.test(t)) return null;
+      if (/^(comment|pourquoi|quand|quel|quelle|quels|quelles|combien|est ce que|how|why|what|which|como|cual|por que)\b/.test(t)) return null; // question, pas une commande
+      if (/\b(site|application|appli|app|code|html|css|javascript|android|page web|landing|formulaire|programme)\b/.test(t)) return null;
+      const verb = '(veux|voudrais|aimerais|souhaite|donne|cree|creer|crees|creez|fais|fait|faites|faire|genere|generer|generes|realise|realiser|produis|produire|monte|monter|prepare|imagine|make|create|generate|produce|render|haz|hazme|crea|creame|genera|hacer)';
+      const det = '(?:\\s*-?\\s*(?:moi|nous|me))?\\s+(?:un|une|des|le|la|les|ma|mon|a|an|the|some|el|los|unas?|me)?\\s*(?:petite?s?|courte?s?|belle?s?|beaux?|jolie?s?|nouvelle?s?|super|short|nice|small|pequeno|breve)?\\s*';
+      if (new RegExp(`\\b${verb}${det}(video|videos|clip|film|court metrage|dessin anime|animation|reel|vlog|spot|pub video|video publicitaire|diaporama|montage)\\b`).test(t) || /^(une?\s+)?(video|clip|animation)\s+(de|du|des|sur|d |pour|about|of|sobre)\b/.test(t) || /(اصنع|انشئ|أنشئ).{0,20}فيديو/.test(text)) return 'video';
+      if (/^(dessine|dessines|dessinez|dessiner|draw|dibuja|dibujame|pinta|peins|illustre)\b/.test(t) || /\b(dessine|dessinez|dessines)[\s-]*moi\b/.test(t) || /\b(peux|pouvez|pourrais|pourriez|can|could|puedes)\b[^.?!]{0,15}\b(dessiner|draw|dibujar)\s+(un|une|des|le|la|les|mon|ma|a|an|the|una)\b/.test(t) || new RegExp(`\\b${verb}${det}(dessin|dessins|image|images|illustration|photo|photos|logo|affiche|poster|portrait|peinture|tableau|picture|drawing|imagen|dibujo|flyer|avatar|icone|banniere|wallpaper|fond d ecran|caricature|bd|bande dessinee|manga|coloriage)\\b`).test(t) || /(ارسم|صورة)/.test(text)) return 'image';
+      return null;
+    }
+
+    /** Format et style déduits de la phrase (dessin, logo, vertical…) */
+    function creativeOptions(text) {
+      const t = String(text || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+      const ratio = /(9:16|vertical|tiktok|reel|story|stories|statut|status|fond d.ecran|wallpaper|portrait de telephone|telephone)/.test(t) ? '9:16' : /(16:9|paysage|youtube|banniere|horizontal|panorama|couverture)/.test(t) ? '16:9' : '1:1';
+      let style = 'Photoréaliste HD, éclairage cinéma';
+      if (/(dessin|dessine|draw|dibuj|crayon|illustr|croquis|sketch)/.test(t)) style = 'Illustration dessinée à la main, couleurs vives, détails soignés';
+      if (/(dessin anime|cartoon|enfant|bd|bande dessinee|manga|kawaii)/.test(t)) style = 'Style dessin animé coloré et joyeux';
+      if (/(aquarelle|watercolor)/.test(t)) style = 'Peinture aquarelle artistique';
+      if (/(peinture|tableau|huile)/.test(t)) style = "Peinture à l'huile artistique";
+      if (/(coloriage)/.test(t)) style = 'Coloriage noir et blanc pour enfants, traits nets, fond blanc';
+      if (/(logo|icone|identite)/.test(t)) style = 'Logo vectoriel minimaliste';
+      if (/(3d|pixar)/.test(t)) style = 'Rendu 3D moderne et lumineux';
+      return { ratio, style };
+    }
+
+    const VIDEO_SB_PROMPT = (langName) => `Tu es BOUA AI Studio Vidéo. L'utilisateur veut une courte vidéo. Écris son scénario en 5 scènes (4 à 6), UNIQUEMENT sous cette forme :
+<video_storyboard>
+{"title":"Titre de la vidéo","scenes":[{"heading":"TITRE COURT","subtitle":"Phrase courte affichée à l'écran","visual":"detailed cinematic image description in English, no text in the image","colors":["#0f766e","#f59e0b"]}]}
+</video_storyboard>
+Règles : « heading » (3 à 6 mots) et « subtitle » (une phrase de 12 mots maximum) sont écrits en ${langName}. « visual » décrit précisément en anglais l'image de la scène (sujet, lieu, lumière, cadrage, style) et garde le même style visuel d'une scène à l'autre. Les scènes racontent une histoire avec un début, un milieu et une fin. N'invente aucun fait réel douteux. Après la balise, écris une seule phrase qui présente la vidéo.`;
+
+    /** Scénario de secours si le texte n'a pas pu être écrit */
+    function fallbackStoryboard(q) {
+      const subject = String(q || 'BOUA AI').replace(/^(fais|cr[ée]e|g[ée]n[èe]re|r[ée]alise)[- ]?(moi)?\s+(une?\s+)?(petite\s+|courte\s+)?(vid[ée]o|clip|animation)\s*(de|du|des|sur|d'|pour)?\s*/i, '').slice(0, 120) || 'BOUA AI';
+      const cap = subject.charAt(0).toUpperCase() + subject.slice(1);
+      return {
+        title: cap,
+        scenes: [
+          { heading: cap.slice(0, 40), subtitle: 'Découvrez cette histoire en images', visual: `${subject}, wide establishing shot, cinematic lighting` },
+          { heading: 'Les détails', subtitle: 'Chaque image raconte un moment', visual: `${subject}, close-up details, cinematic lighting` },
+          { heading: "L'action", subtitle: 'Le mouvement prend vie', visual: `${subject}, dynamic action scene, cinematic lighting` },
+          { heading: 'Le final', subtitle: 'Merci de votre attention', visual: `${subject}, beautiful final scene at golden hour, cinematic` },
+        ],
+      };
+    }
+
+    async function cloudText(body, signal) {
+      const res = await bouaCloudFetch(body, signal);
+      let text = '';
+      let err = '';
+      await readEventStream(res, (json) => {
+        if (json?.error) err = json.error.message || 'Erreur';
+        const piece = json?.candidates?.[0]?.content?.parts?.map((p) => (p.thought ? '' : p.text || '')).join('') || '';
+        if (piece) text += piece;
+      });
+      if (!text && err) throw new Error(err);
+      return text;
+    }
+
+    async function cloudImage(prompt, ratio, seed, fast, signal) {
+      const res = await bouaCloudFetch({ mode: 'image', fast: Boolean(fast), aspectRatio: ratio, seed, contents: [{ role: 'user', parts: [{ text: prompt }] }] }, signal);
+      let url = '';
+      await readEventStream(res, (json) => {
+        const part = json?.candidates?.[0]?.content?.parts?.find((p) => p.inlineData && /^image\//.test(p.inlineData.mimeType || ''));
+        if (part) url = `data:${part.inlineData.mimeType};base64,${part.inlineData.data}`;
+      });
+      return url;
+    }
+
+    function loadImg(url) {
+      return new Promise((resolve) => {
+        if (!url) return resolve(null);
+        const img = new Image();
+        img.onload = () => resolve(img);
+        img.onerror = () => resolve(null);
+        img.src = url;
+      });
+    }
+
+    function wrapLines(ctx, text, maxW) {
+      const words = String(text || '').split(/\s+/).filter(Boolean);
+      const lines = [];
+      let line = '';
+      for (const w of words) {
+        const test = line ? line + ' ' + w : w;
+        if (ctx.measureText(test).width > maxW && line) {
+          lines.push(line);
+          line = w;
+        } else line = test;
+      }
+      if (line) lines.push(line);
+      return lines.slice(0, 3);
+    }
+
+    /** Musique d'ambiance douce générée dans le navigateur (aucun fichier, aucun droit d'auteur) */
+    function makeAmbientMusic(totalSec) {
+      try {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        const ac = new AC();
+        const dest = ac.createMediaStreamDestination();
+        const master = ac.createGain();
+        master.gain.value = 0.0001;
+        master.connect(dest);
+        const t0 = ac.currentTime + 0.05;
+        master.gain.exponentialRampToValueAtTime(0.22, t0 + 1.5);
+        master.gain.setValueAtTime(0.22, t0 + Math.max(2, totalSec - 2));
+        master.gain.exponentialRampToValueAtTime(0.0001, t0 + totalSec);
+        const chords = [
+          [220, 261.63, 329.63],
+          [174.61, 220, 261.63],
+          [196, 246.94, 293.66],
+          [164.81, 207.65, 246.94],
+        ];
+        const len = 4;
+        for (let c = 0; c * len < totalSec; c++) {
+          const ch = chords[c % chords.length];
+          const start = t0 + c * len;
+          ch.forEach((f, k) => {
+            const o = ac.createOscillator();
+            const g = ac.createGain();
+            o.type = k === 0 ? 'triangle' : 'sine';
+            o.frequency.value = f;
+            g.gain.setValueAtTime(0.0001, start);
+            g.gain.exponentialRampToValueAtTime(0.18, start + 0.8);
+            g.gain.exponentialRampToValueAtTime(0.0001, start + len + 0.4);
+            o.connect(g).connect(master);
+            o.start(start);
+            o.stop(start + len + 0.5);
+          });
+          // petites notes (arpège)
+          for (let n = 0; n < 4; n++) {
+            const o = ac.createOscillator();
+            const g = ac.createGain();
+            o.type = 'sine';
+            o.frequency.value = ch[n % 3] * 2;
+            const s = start + n * (len / 4);
+            g.gain.setValueAtTime(0.0001, s);
+            g.gain.exponentialRampToValueAtTime(0.07, s + 0.05);
+            g.gain.exponentialRampToValueAtTime(0.0001, s + 0.9);
+            o.connect(g).connect(master);
+            o.start(s);
+            o.stop(s + 1);
+          }
+        }
+        return { ac, stream: dest.stream };
+      } catch (e) {
+        return null;
+      }
+    }
+
+    /** Dessine une image de la vidéo au temps t (secondes) */
+    function drawStoryFrame(ctx, W, H, sb, t, D, outro) {
+      const n = sb.scenes.length;
+      const total = n * D + outro;
+      ctx.fillStyle = '#000';
+      ctx.fillRect(0, 0, W, H);
+      const drawScene = (i, alpha, p) => {
+        const sc = sb.scenes[i];
+        if (!sc) return;
+        ctx.save();
+        ctx.globalAlpha = alpha;
+        const img = sc._img;
+        if (img) {
+          const zoomIn = i % 2 === 0;
+          const z = zoomIn ? 1.04 + 0.12 * p : 1.16 - 0.12 * p;
+          const s = Math.max(W / img.width, H / img.height) * z;
+          const dw = img.width * s;
+          const dh = img.height * s;
+          const panX = (i % 3 === 0 ? -1 : i % 3 === 1 ? 1 : 0) * (dw - W) * 0.25 * (p - 0.5);
+          ctx.drawImage(img, (W - dw) / 2 + panX, (H - dh) / 2, dw, dh);
+        } else {
+          const cols = sc.colors && sc.colors.length ? sc.colors : ['#0f766e', '#f59e0b'];
+          const g = ctx.createLinearGradient(0, 0, W, H);
+          g.addColorStop(0, cols[0]);
+          g.addColorStop(1, cols[1] || cols[0]);
+          ctx.fillStyle = g;
+          ctx.fillRect(0, 0, W, H);
+          for (let k = 0; k < 14; k++) {
+            ctx.beginPath();
+            ctx.fillStyle = 'rgba(255,255,255,0.08)';
+            const r = (0.04 + (k % 5) * 0.03) * Math.min(W, H);
+            ctx.arc(((k * 137 + t * 40 * (1 + (k % 3))) % (W + 2 * r)) - r, ((k * 89) % H) + Math.sin(t + k) * 20, r, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+        // voile pour la lisibilité du texte
+        const v = ctx.createLinearGradient(0, H * 0.45, 0, H);
+        v.addColorStop(0, 'rgba(0,0,0,0)');
+        v.addColorStop(1, 'rgba(0,0,0,0.78)');
+        ctx.fillStyle = v;
+        ctx.fillRect(0, 0, W, H);
+        // textes animés
+        const a = Math.min(1, Math.max(0, (p - 0.06) / 0.14)) * Math.min(1, Math.max(0, (0.97 - p) / 0.08));
+        if (a > 0) {
+          const base = Math.min(W, H);
+          const hs = Math.round(base * (W > H ? 0.075 : 0.085));
+          const ss = Math.round(hs * 0.52);
+          ctx.globalAlpha = alpha * a;
+          ctx.textAlign = 'center';
+          ctx.shadowColor = 'rgba(0,0,0,0.6)';
+          ctx.shadowBlur = 12;
+          ctx.fillStyle = '#ffffff';
+          ctx.font = `800 ${hs}px Inter, Arial, sans-serif`;
+          const hl = wrapLines(ctx, sc.heading, W * 0.86);
+          ctx.font = `500 ${ss}px Inter, Arial, sans-serif`;
+          const sl = wrapLines(ctx, sc.subtitle, W * 0.84);
+          const blockH = hl.length * hs * 1.12 + sl.length * ss * 1.35 + ss * 0.6;
+          let y = H - H * 0.07 - blockH + (1 - a) * 18;
+          ctx.font = `800 ${hs}px Inter, Arial, sans-serif`;
+          for (const l of hl) {
+            y += hs * 1.12;
+            ctx.fillText(l, W / 2, y);
+          }
+          y += ss * 0.6;
+          ctx.font = `500 ${ss}px Inter, Arial, sans-serif`;
+          ctx.fillStyle = '#d1fae5';
+          for (const l of sl) {
+            y += ss * 1.35;
+            ctx.fillText(l, W / 2, y);
+          }
+        }
+        ctx.restore();
+      };
+      if (t < n * D) {
+        const i = Math.floor(t / D);
+        const p = (t - i * D) / D;
+        drawScene(i, 1, p);
+        const fade = 0.7;
+        const left = D - (t - i * D);
+        if (left < fade && i + 1 < n) drawScene(i + 1, 1 - left / fade, 0);
+      } else {
+        // fin : titre + signature
+        const q = Math.min(1, (t - n * D) / 0.6);
+        drawScene(n - 1, 1 - q * 0.85, 1);
+        ctx.save();
+        ctx.globalAlpha = q;
+        ctx.fillStyle = 'rgba(0,0,0,0.55)';
+        ctx.fillRect(0, 0, W, H);
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#fff';
+        const fs = Math.round(Math.min(W, H) * 0.07);
+        ctx.font = `800 ${fs}px Inter, Arial, sans-serif`;
+        const tl = wrapLines(ctx, sb.title, W * 0.84);
+        let y = H / 2 - (tl.length * fs * 1.1) / 2;
+        for (const l of tl) {
+          y += fs * 1.1;
+          ctx.fillText(l, W / 2, y);
+        }
+        ctx.font = `600 ${Math.round(fs * 0.45)}px Inter, Arial, sans-serif`;
+        ctx.fillStyle = '#6ee7b7';
+        ctx.fillText('Créé avec BOUA AI', W / 2, y + fs * 0.9);
+        ctx.restore();
+      }
+      // signature + barre de progression
+      ctx.save();
+      ctx.globalAlpha = 0.85;
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#fff';
+      ctx.font = `700 ${Math.round(Math.min(W, H) * 0.028)}px Inter, Arial, sans-serif`;
+      ctx.fillText('BOUA AI', W - Math.min(W, H) * 0.03, Math.min(W, H) * 0.05);
+      ctx.fillStyle = 'rgba(255,255,255,0.2)';
+      ctx.fillRect(0, H - 5, W, 5);
+      ctx.fillStyle = '#10b981';
+      ctx.fillRect(0, H - 5, (W * Math.min(t, total)) / total, 5);
+      ctx.restore();
+    }
+
+    /** Monte la vidéo (images + textes animés + musique) et l'enregistre en MP4 ou WEBM */
+    function recordStoryVideo(sb, ratio, onProgress, signal) {
+      return new Promise((resolve, reject) => {
+        const W = ratio === '9:16' ? 720 : 1280;
+        const H = ratio === '9:16' ? 1280 : 720;
+        const canvas = document.createElement('canvas');
+        canvas.width = W;
+        canvas.height = H;
+        canvas.style.cssText = 'position:fixed;left:-99999px;top:0;width:2px;height:2px;opacity:0;pointer-events:none';
+        document.body.appendChild(canvas);
+        const ctx = canvas.getContext('2d');
+        const D = 4.2;
+        const outro = 2.2;
+        const total = sb.scenes.length * D + outro;
+        if (typeof MediaRecorder === 'undefined' || !canvas.captureStream) {
+          canvas.remove();
+          return reject(new Error("Votre navigateur ne permet pas d'enregistrer une vidéo. Essayez avec Chrome."));
+        }
+        const vStream = canvas.captureStream(30);
+        const music = makeAmbientMusic(total);
+        const tracks = [...vStream.getVideoTracks(), ...(music ? music.stream.getAudioTracks() : [])];
+        const stream = new MediaStream(tracks);
+        const mime = ['video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4;codecs=avc1', 'video/mp4', 'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find((m) => MediaRecorder.isTypeSupported?.(m)) || '';
+        let rec;
+        try {
+          rec = new MediaRecorder(stream, mime ? { mimeType: mime, videoBitsPerSecond: 4_000_000 } : undefined);
+        } catch (e) {
+          rec = new MediaRecorder(new MediaStream(vStream.getVideoTracks()));
+        }
+        const chunks = [];
+        rec.ondataavailable = (e) => e.data && e.data.size && chunks.push(e.data);
+        let timer = null;
+        const cleanup = () => {
+          clearTimeout(timer);
+          try {
+            music?.ac.close();
+          } catch (e) {}
+          canvas.remove();
+        };
+        rec.onstop = () => {
+          cleanup();
+          if (signal?.aborted) return reject(new DOMException('Arrêt', 'AbortError'));
+          const type = (rec.mimeType || mime || 'video/webm').split(';')[0];
+          resolve({ blob: new Blob(chunks, { type }), ext: /mp4/.test(type) ? 'mp4' : 'webm' });
+        };
+        const start = performance.now();
+        const tick = () => {
+          const t = (performance.now() - start) / 1000;
+          drawStoryFrame(ctx, W, H, sb, Math.min(t, total), D, outro);
+          onProgress && onProgress(Math.min(1, t / total));
+          if (signal?.aborted || t >= total) {
+            if (rec.state !== 'inactive') rec.stop();
+            return;
+          }
+          timer = setTimeout(tick, 1000 / 30);
+        };
+        drawStoryFrame(ctx, W, H, sb, 0, D, outro);
+        rec.start(500);
+        tick();
+      });
+    }
+
+    /** Vidéo complète demandée dans la discussion : scénario → images IA → montage → lecteur */
+    async function makeChatVideo(chat, queryText, signal, presetSb) {
+      const msg = { role: 'assistant', content: '', streaming: true, engineUsed: 'boua' };
+      chat.messages.push(msg);
+      const idx = chat.messages.length - 1;
+      const say = (t) => {
+        msg.content = t;
+        scheduleStreamRender(chat, idx);
+      };
+      const ratio = state.mode === 'video' ? document.getElementById('video-aspect-ratio')?.value || creativeOptions(queryText).ratio : creativeOptions(queryText).ratio === '9:16' ? '9:16' : '16:9';
+      renderMessages();
+      // 1) Scénario
+      let sb = presetSb ? JSON.parse(JSON.stringify(presetSb)) : null;
+      let intro = '';
+      if (!sb) {
+        say('🎬 **Création de votre vidéo…**\n\n> ✍️ Étape 1/3 — Écriture du scénario…');
+        try {
+          const langName = I18N[state.lang]?.aiLangName || 'Français';
+          const txt = await cloudText({ contents: [{ role: 'user', parts: [{ text: queryText }] }], systemInstruction: VIDEO_SB_PROMPT(langName), speed: 'fast', lang: state.lang, maxTokens: 4096, temperature: 0.8, engine: 'auto' }, signal);
+          const parsed = parseAiReply(txt);
+          if (parsed.videoSb && Array.isArray(parsed.videoSb.scenes) && parsed.videoSb.scenes.length) {
+            sb = {
+              title: String(parsed.videoSb.title || 'Vidéo BOUA AI').slice(0, 120),
+              scenes: parsed.videoSb.scenes.slice(0, 6).map((s) => ({
+                heading: String(s.heading || '').slice(0, 80),
+                subtitle: String(s.subtitle || '').slice(0, 160),
+                visual: String(s.visual || s.heading || '').slice(0, 600),
+                colors: Array.isArray(s.colors) && s.colors.every((c) => /^#[0-9a-f]{3,8}$/i.test(c)) ? s.colors.slice(0, 2) : undefined,
+              })),
+            };
+            intro = txt.replace(/<video_storyboard>[\s\S]*?<\/video_storyboard>/i, '').replace(/<suggestions>[\s\S]*$/i, '').trim().slice(0, 400);
+          }
+        } catch (e) {
+          if (e.name === 'AbortError') throw e;
+        }
+        if (!sb) sb = fallbackStoryboard(queryText);
+      }
+      sb.scenes.forEach((sc) => (sc.style = sc.style || 'waves'));
+      // Le Studio Vidéo affiche le même scénario (les images y apparaissent au fur et à mesure)
+      state.videoStoryboard = { title: sb.title, scenes: sb.scenes };
+      state.videoTotalSec = Math.max(8, sb.scenes.length * 3.5);
+      if (state.mode === 'video') {
+        state.videoElapsed = 0;
+        state.videoPlaying = true;
+        state.showStudio = true;
+        state.studioTab = 'video';
+        renderStudio();
+      }
+      // 2) Images IA (3 en parallèle)
+      let done = 0;
+      const n = sb.scenes.length;
+      const style = creativeOptions(queryText).style;
+      say(`🎬 **${sb.title}**\n\n> 🎨 Étape 2/3 — Création des images : 0/${n}…`);
+      const queue = sb.scenes.map((sc, i) => async () => {
+        const prompt = `${sc.visual}. ${style}. Cinematic composition, high detail, no text, no letters, no watermark.`;
+        let url = '';
+        try {
+          url = await cloudImage(prompt, ratio, 7000 + i, true, signal);
+          if (!url) url = await cloudImage(prompt, ratio, 9000 + i, false, signal);
+        } catch (e) {
+          if (e.name === 'AbortError') throw e;
+        }
+        sc._img = await loadImg(url);
+        done++;
+        say(`🎬 **${sb.title}**\n\n> 🎨 Étape 2/3 — Création des images : ${done}/${n}…`);
+        const st = document.getElementById('video-studio-status');
+        if (st && state.videoStoryboard?.scenes === sb.scenes) st.textContent = done < n ? `🎨 Création des images IA : ${done}/${n}…` : '✓ Vidéo prête avec images IA — exportable en .WEBM';
+        if (state.studioTab === 'video' && typeof drawVideoFrame === 'function') drawVideoFrame(state.videoElapsed);
+      });
+      const worker = async () => {
+        while (queue.length) await queue.shift()();
+      };
+      await Promise.all([worker(), worker(), worker()]);
+      if (signal?.aborted) throw new DOMException('Arrêt', 'AbortError');
+      // 3) Montage + enregistrement
+      const { blob, ext } = await recordStoryVideo(
+        sb,
+        ratio,
+        (p) => {
+          const pct = Math.round(p * 100);
+          if (pct % 5 === 0) say(`🎬 **${sb.title}**\n\n> 🎞️ Étape 3/3 — Montage de la vidéo : ${pct}% _(gardez cette page ouverte)_`);
+        },
+        signal
+      );
+      const url = URL.createObjectURL(blob);
+      liveVideos.set(url, { blob, ext });
+      const missing = sb.scenes.filter((s) => !s._img).length;
+      const clean = { title: sb.title, ratio, scenes: sb.scenes.map(({ heading, subtitle, visual, colors }) => ({ heading, subtitle, visual, colors })) };
+      delete msg.streaming;
+      msg.content =
+        `🎬 **${sb.title}** — vidéo ${ratio === '9:16' ? 'verticale 9:16 (TikTok, Reels, WhatsApp)' : '16:9 (YouTube, Facebook)'} de ${Math.round(n * 4.2 + 2.2)} s, avec musique d'ambiance.\n\n` +
+        (intro ? intro + '\n\n' : '') +
+        sb.scenes.map((s, i) => `${i + 1}. **${s.heading}** — ${s.subtitle}`).join('\n') +
+        (missing ? `\n\n_${missing} image(s) n'ont pas pu être créées : un fond animé les remplace._` : '') +
+        `\n<suggestions>\nRefais la vidéo en format vertical 9:16 pour TikTok\nFais une autre vidéo sur le même sujet avec un style dessin animé\nÉcris un texte de publication pour partager cette vidéo\n</suggestions>`;
+      msg.generatedVideo = url;
+      msg.videoExt = ext;
+      msg.videoSb = clean;
+    }
+
+    /** Partage natif (WhatsApp, etc.) ou téléchargement */
+    async function shareGeneratedVideo(url, title) {
+      const v = liveVideos.get(url);
+      if (!v) return;
+      const file = new File([v.blob], `boua-ai-video.${v.ext}`, { type: v.blob.type });
+      try {
+        if (navigator.canShare?.({ files: [file] })) {
+          await navigator.share({ files: [file], title: title || 'Vidéo BOUA AI' });
+          return;
+        }
+      } catch (e) {
+        if (e.name === 'AbortError') return;
+      }
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = file.name;
+      a.click();
+    }
+    /* ================= fin v14 ================= */
+
     /** Vidéo réaliste Veo : démarrage, suivi toutes les 10 s, téléchargement via le serveur */
     async function generateVeoVideo() {
       const statusEl = document.getElementById('veo-status');
@@ -3328,6 +3791,7 @@ contenu complet du document
         modeRules[state.mode] || modeRules.assistant,
         'QUALITÉ : sois exact ; si tu n’es pas sûr, dis-le ; n’invente jamais de sources, de chiffres ou de citations. Utilise le Markdown (titres, listes, tableaux, blocs de code avec le langage).',
         'GRAPHIQUES : quand un graphique aide (statistiques, comparaison, évolution, répartition, données d’un fichier), ajoute un bloc de code de langage chart contenant UNIQUEMENT du JSON valide : ```chart\n{"type":"bar|line|pie|doughnut|radar","title":"…","labels":["…"],"datasets":[{"label":"…","data":[nombres]}]}\n``` — il sera dessiné automatiquement (exportable en PNG). N’utilise que des chiffres exacts ou fournis.',
+        'IMAGES ET VIDÉOS : BOUA AI crée de vrais dessins, images et vidéos (l’application les génère automatiquement quand l’utilisateur écrit par exemple « Dessine un lion » ou « Fais une vidéo sur le Mali »). Ne dis JAMAIS que tu ne peux pas créer d’image ou de vidéo : si la demande est indirecte, invite l’utilisateur à écrire « Dessine … » ou « Fais une vidéo sur … ».',
         'DONNÉES TEMPS RÉEL : si la question contient un bloc [DONNÉES EN TEMPS RÉEL], utilise exactement ces valeurs (météo, taux de change, heure) et cite la source.',
         state.voiceConversation
           ? 'CONVERSATION VOCALE ACTIVE : ta réponse sera lue à voix haute. Réponds en 1 à 4 phrases naturelles et chaleureuses, sans Markdown, sans liste, sans emoji, sans tableau ni code (sauf demande explicite).'
@@ -5715,6 +6179,22 @@ contenu complet du document
               </div>`
             : '';
 
+          const videoHtml = m.videoSb
+            ? m.generatedVideo && liveVideos.has(m.generatedVideo)
+              ? `<div class="my-3 rounded-2xl overflow-hidden border border-zinc-800 bg-black boua-video-card">
+                  <video src="${m.generatedVideo}" controls playsinline preload="metadata" class="w-full max-h-[480px] bg-black mx-auto block"></video>
+                  <div class="px-3 py-2 bg-zinc-900 border-t border-zinc-800 flex flex-wrap gap-1.5 justify-end">
+                    <a href="${m.generatedVideo}" download="boua-ai-video.${m.videoExt || 'webm'}" class="px-3 py-1 rounded-lg bg-emerald-600 text-white text-xs font-semibold">⬇ Télécharger (.${(m.videoExt || 'webm').toUpperCase()})</a>
+                    <button type="button" data-share-video="${idx}" class="px-3 py-1 rounded-lg bg-zinc-800 text-zinc-200 text-xs font-semibold">📤 Partager</button>
+                    <button type="button" data-studio-video="${idx}" class="px-3 py-1 rounded-lg bg-zinc-800 text-zinc-200 text-xs font-semibold">🎛️ Studio Vidéo</button>
+                  </div>
+                </div>`
+              : `<div class="my-3 p-3 rounded-2xl border border-zinc-800 bg-zinc-950 flex flex-wrap items-center justify-between gap-2">
+                  <span class="text-xs text-zinc-400">🎬 La vidéo n'est plus en mémoire sur cet appareil (elle n'est pas stockée en ligne).</span>
+                  <button type="button" data-remake-video="${idx}" class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-xs font-semibold">🎬 Recréer la vidéo</button>
+                </div>`
+            : '';
+
           const filesBtnHtml =
             parsed.files.length > 0
               ? `<div class="my-2.5 p-3 rounded-xl bg-zinc-950 border border-emerald-500/40 space-y-2.5">
@@ -5789,6 +6269,7 @@ contenu complet du document
                 </div>
                 ${thinkHtml}
                 ${imgHtml}
+                ${videoHtml}
                 ${filesBtnHtml}
                 <div id="msg-body-${idx}" class="markdown-body text-sm break-words">${renderMarkdown(parsed.displayMd)}</div>
                 ${
@@ -5870,6 +6351,40 @@ contenu complet du document
           const idx = Number(b.getAttribute('data-speak'));
           const uid = b.getAttribute('data-uid');
           speakText(uid, chat.messages[idx]?.content || '');
+        });
+      });
+
+      container.querySelectorAll('[data-share-video]').forEach((b) => {
+        b.addEventListener('click', () => {
+          const m = chat.messages[Number(b.getAttribute('data-share-video'))];
+          if (m) shareGeneratedVideo(m.generatedVideo, m.videoSb?.title);
+        });
+      });
+      container.querySelectorAll('[data-studio-video]').forEach((b) => {
+        b.addEventListener('click', () => {
+          const m = chat.messages[Number(b.getAttribute('data-studio-video'))];
+          if (!m?.videoSb) return;
+          if (!state.videoStoryboard || state.videoStoryboard.title !== m.videoSb.title) {
+            state.videoStoryboard = { title: m.videoSb.title, scenes: m.videoSb.scenes.map((sc) => ({ ...sc, style: 'waves' })) };
+            state.videoTotalSec = Math.max(8, m.videoSb.scenes.length * 3.5);
+            loadSceneImages(state.videoStoryboard);
+          }
+          state.videoElapsed = 0;
+          state.videoPlaying = true;
+          state.showStudio = true;
+          state.studioTab = 'video';
+          renderStudio();
+        });
+      });
+      container.querySelectorAll('[data-remake-video]').forEach((b) => {
+        b.addEventListener('click', async () => {
+          if (state.isLoading) return;
+          const i = Number(b.getAttribute('data-remake-video'));
+          const m = chat.messages[i];
+          const q = [...chat.messages.slice(0, i)].reverse().find((x) => x.role === 'user')?.content || m?.videoSb?.title || '';
+          if (!m?.videoSb) return;
+          chat.messages.splice(i, 1);
+          await runAssistantTurn(chat, q, { videoSb: m.videoSb });
         });
       });
 
@@ -6231,14 +6746,25 @@ contenu complet du document
       const contextMessages = buildContextMessages(chat.messages);
 
       try {
-        if (state.mode === 'image') {
+        // v14 : « Dessine… », « Fais une vidéo… » écrits dans n'importe quel mode
+        const creative = opts.videoSb ? 'video' : opts.compare ? null : state.mode === 'image' ? 'image' : state.mode === 'video' ? 'video' : state.mode === 'builder' || state.mode === 'maths' ? null : detectCreativeIntent(queryText);
+        if (creative === 'video') {
+          if (!isProviderConfigured('boua')) {
+            chat.messages.push(needLoginMessage());
+            return;
+          }
+          await makeChatVideo(chat, queryText, signal, opts.videoSb);
+          return;
+        }
+        if (creative === 'image') {
           if (!buildExecutionChain().length && !(state.apiKeys.gemini || '').trim()) {
             chat.messages.push(needLoginMessage());
             return;
           }
           renderMessages();
-          const ratio = document.getElementById('image-aspect-ratio')?.value || '1:1';
-          const stylePreset = document.getElementById('image-style-preset')?.value || 'Photoréaliste HD';
+          const auto = creativeOptions(queryText);
+          const ratio = state.mode === 'image' ? document.getElementById('image-aspect-ratio')?.value || '1:1' : auto.ratio;
+          const stylePreset = state.mode === 'image' ? document.getElementById('image-style-preset')?.value || 'Photoréaliste HD' : auto.style;
           const img = await callGeminiImage(queryText, ratio, stylePreset, signal);
           chat.messages.push({
             role: 'assistant',

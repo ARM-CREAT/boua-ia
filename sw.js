@@ -1,5 +1,5 @@
 // BOUA AI — Service Worker (changez la version à chaque mise à jour du site)
-const CACHE_NAME = 'boua-ai-v17';
+const CACHE_NAME = 'boua-ai-v18';
 const ASSETS = ['/', '/index.html', '/manifest.json', '/icon.svg', '/icon-192.png', '/icon-512.png'];
 
 self.addEventListener('install', (e) => {
