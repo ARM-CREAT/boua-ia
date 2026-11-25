@@ -788,7 +788,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 29, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 30, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -929,6 +929,7 @@ export default async function handler(req) {
     return jsonError(400, e.message, origin);
   }
   const isImage = body.mode === 'image';
+  const plain = Boolean(body.noSearch); // ex. scénario de vidéo : aucune recherche web / temps réel
   const speed = body.speed === 'fast' ? 'fast' : 'quality';
   const system = typeof body.systemInstruction === 'string' ? body.systemInstruction.slice(0, 60000) : '';
   const temperature = Math.min(1.2, Math.max(0, Number(body.temperature) || 0.5));
@@ -986,9 +987,9 @@ export default async function handler(req) {
   let webResults = [];
   const lastUserQ = [...contents].reverse().find((c) => c.role === 'user');
   const qText0 = String(body.query || lastUserQ?.parts?.map((p) => p.text || '').join(' ') || '').slice(0, 600);
-  const socialPlatforms = isImage ? [] : detectSocial(qText0);
-  const newsy = !isImage && (Boolean(body.mustSearch) || NEWSY_RE.test(qText0) || socialPlatforms.length > 0);
-  if (!isImage && (newsy || (wantWeb && body.alwaysSearch))) {
+  const socialPlatforms = isImage || plain ? [] : detectSocial(qText0);
+  const newsy = !isImage && !plain && (Boolean(body.mustSearch) || NEWSY_RE.test(qText0) || socialPlatforms.length > 0);
+  if (!isImage && !plain && (newsy || (wantWeb && body.alwaysSearch))) {
     const lastUser = [...contents].reverse().find((c) => c.role === 'user');
     const userText = String(body.query || lastUser?.parts?.map((p) => p.text || '').join(' ') || '');
     const lang0 = String(body.lang || 'fr');
@@ -1088,7 +1089,7 @@ export default async function handler(req) {
     try {
       /* ---------- Données en temps réel : météo, devises, heure (chiffres exacts + sources) ---------- */
       let realtimeHit = false;
-      if (!isImage && apiKeys.length && candidates.length) {
+      if (!isImage && !plain && apiKeys.length && candidates.length) {
         const lastUserRt = [...contents].reverse().find((c) => c.role === 'user');
         const q = String(body.query || lastUserRt?.parts?.map((p) => p.text || '').join(' ') || '').slice(0, 500);
         if (REALTIME_RE.test(q)) {
