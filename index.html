@@ -3111,6 +3111,32 @@ Règles : « heading » (3 à 6 mots) et « subtitle » (une phrase de 12 mots m
       return url;
     }
 
+    /** Secours : le navigateur demande l'image directement au service gratuit (autre adresse IP que le serveur) */
+    async function browserImage(prompt, ratio, seed, signal) {
+      const dims = { '1:1': [1024, 1024], '16:9': [1280, 720], '9:16': [720, 1280], '4:3': [1024, 768] }[ratio] || [1024, 1024];
+      const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(String(prompt).slice(0, 700))}?width=${dims[0]}&height=${dims[1]}&nologo=true&safe=true&seed=${seed}`;
+      try {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), 60000);
+        signal?.addEventListener?.('abort', () => ctrl.abort());
+        const r = await fetch(url, { signal: ctrl.signal, mode: 'cors' });
+        clearTimeout(t);
+        const type = (r.headers.get('content-type') || '').split(';')[0];
+        if (!r.ok || !/^image\//.test(type)) return '';
+        const blob = await r.blob();
+        if (blob.size < 1000) return '';
+        return await new Promise((res) => {
+          const fr = new FileReader();
+          fr.onload = () => res(String(fr.result || ''));
+          fr.onerror = () => res('');
+          fr.readAsDataURL(blob);
+        });
+      } catch (e) {
+        if (signal?.aborted) throw new DOMException('Arrêt', 'AbortError');
+        return '';
+      }
+    }
+
     function loadImg(url) {
       return new Promise((resolve) => {
         if (!url) return resolve(null);
@@ -3437,11 +3463,15 @@ Règles : « heading » (3 à 6 mots) et « subtitle » (une phrase de 12 mots m
       const queue = sb.scenes.map((sc, i) => async () => {
         const prompt = `${sc.visual}. ${style}. Cinematic composition, high detail, no text, no letters, no watermark.`;
         let url = '';
-        try {
-          url = await cloudImage(prompt, ratio, 7000 + i, true, signal);
-          if (!url) url = await cloudImage(prompt, ratio, 9000 + i, false, signal);
-        } catch (e) {
-          if (e.name === 'AbortError') throw e;
+        // 3 essais : serveur → navigateur direct → serveur avec une autre graine
+        const tries = [() => cloudImage(prompt, ratio, 7000 + i, true, signal), () => browserImage(prompt, ratio, 8000 + i, signal), () => cloudImage(prompt, ratio, 9000 + i, true, signal)];
+        for (let k = 0; k < tries.length && !url; k++) {
+          try {
+            if (k) await new Promise((r) => setTimeout(r, 1200));
+            url = await tries[k]();
+          } catch (e) {
+            if (e.name === 'AbortError') throw e;
+          }
         }
         sc._img = await loadImg(url);
         done++;
@@ -3453,7 +3483,7 @@ Règles : « heading » (3 à 6 mots) et « subtitle » (une phrase de 12 mots m
       const worker = async () => {
         while (queue.length) await queue.shift()();
       };
-      await Promise.all([worker(), worker(), worker()]);
+      await Promise.all([worker(), worker()]);
       if (signal?.aborted) throw new DOMException('Arrêt', 'AbortError');
       // 3) Montage + enregistrement
       const { blob, ext } = await recordStoryVideo(
@@ -4431,6 +4461,8 @@ contenu complet du document
         }
       }
 
+      const direct = await browserImage(fullPrompt, aspectRatio, Math.floor(Math.random() * 1e6), signal);
+      if (direct) return { url: direct, kind: 'photo' };
       return { url: await generateSvgIllustration(prompt, aspectRatio, stylePreset, signal), kind: 'vector' };
     }
 
