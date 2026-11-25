@@ -444,6 +444,145 @@ async function searchWikipedia(query, lang) {
   }
 }
 
+/* ---------------- RÉSEAUX SOCIAUX : YouTube, TikTok, Facebook, Instagram, X, LinkedIn, Reddit ---------------- */
+export const SOCIAL_PLATFORMS = {
+  youtube: { re: /\b(youtube|youtubeur|youtubeuse|yt)\b|cha[iî]ne (youtube|de)|vid[ée]os? (de|sur|youtube)/i, site: 'youtube.com', label: 'YouTube' },
+  tiktok: { re: /\b(tik ?tok|tiktokeur|tiktokeuse)\b/i, site: 'tiktok.com', label: 'TikTok' },
+  facebook: { re: /\b(facebook|fb)\b/i, site: 'facebook.com', label: 'Facebook' },
+  instagram: { re: /\b(instagram|insta|ig)\b/i, site: 'instagram.com', label: 'Instagram' },
+  x: { re: /\b(twitter|tweeter|tweet|tweets|tweete|x\.com)\b|\bsur x\b/i, site: 'x.com', label: 'X (Twitter)' },
+  linkedin: { re: /\blinked ?in\b/i, site: 'linkedin.com', label: 'LinkedIn' },
+  reddit: { re: /\breddit\b/i, site: 'reddit.com', label: 'Reddit' },
+  telegram: { re: /\btelegram\b/i, site: 't.me', label: 'Telegram' },
+  snapchat: { re: /\bsnap ?chat\b/i, site: 'snapchat.com', label: 'Snapchat' },
+};
+const SOCIAL_ALL_RE = /r[ée]seaux? sociaux|social media|redes sociales|sur les r[ée]seaux|buzz|viral|trending|tendance/i;
+
+/** Plateformes demandées dans la question (toutes les principales si « réseaux sociaux ») */
+export function detectSocial(text) {
+  const t = String(text || '');
+  const found = Object.keys(SOCIAL_PLATFORMS).filter((k) => SOCIAL_PLATFORMS[k].re.test(t));
+  if (!found.length && SOCIAL_ALL_RE.test(t)) return ['youtube', 'tiktok', 'facebook', 'instagram', 'x'];
+  return found;
+}
+
+/** Retire de la question les mots qui désignent la plateforme (« sur TikTok », « vidéos YouTube »…) */
+export function socialKeywords(text) {
+  let t = String(text || '');
+  for (const p of Object.values(SOCIAL_PLATFORMS)) t = t.replace(new RegExp(p.re.source, 'gi'), ' ');
+  t = t.replace(SOCIAL_ALL_RE, ' ').replace(/\b(cherche|recherche|trouve|montre|fais une recherche|publications?|posts?|comptes?|profils?|pages?|sur|dans|les|des|le|la|de|du)\b/gi, ' ');
+  return searchKeywords(t) || searchKeywords(text);
+}
+
+/** Lecture des résultats de la page de recherche YouTube (sans clé) */
+export function parseYouTubeHtml(html, max = 6) {
+  const out = [];
+  const m = String(html).match(/var ytInitialData\s*=\s*(\{[\s\S]*?\});\s*<\/script>/) || String(html).match(/ytInitialData"\]\s*=\s*(\{[\s\S]*?\});/);
+  if (!m) return out;
+  let data;
+  try {
+    data = JSON.parse(m[1]);
+  } catch (e) {
+    return out;
+  }
+  const txt = (o) => (o?.simpleText || (o?.runs || []).map((r) => r.text).join('') || '').trim();
+  const walk = (node) => {
+    if (!node || typeof node !== 'object' || out.length >= max) return;
+    if (node.videoRenderer?.videoId) {
+      const v = node.videoRenderer;
+      out.push({
+        title: txt(v.title).slice(0, 200),
+        uri: `https://www.youtube.com/watch?v=${v.videoId}`,
+        source: `YouTube · ${txt(v.ownerText || v.longBylineText)}`.slice(0, 120),
+        date: txt(v.publishedTimeText),
+        snippet: [txt(v.publishedTimeText) && `publiée ${txt(v.publishedTimeText)}`, txt(v.viewCountText), txt(v.lengthText) && `durée ${txt(v.lengthText)}`, (v.detailedMetadataSnippets || []).map((d) => txt(d.snippetText)).join(' ')].filter(Boolean).join(' · ').slice(0, 500),
+        platform: 'YouTube',
+      });
+      return;
+    }
+    for (const k in node) walk(node[k]);
+  };
+  walk(data);
+  return out;
+}
+
+async function searchYouTube(query, lang) {
+  const key = env('YOUTUBE_API_KEY');
+  const hl = { fr: 'fr', es: 'es', en: 'en', ar: 'ar' }[lang] || 'fr';
+  // 1) API officielle (si une clé YouTube Data API v3 est configurée) : résultats exacts et datés
+  if (key) {
+    try {
+      const r = await timedFetch(`https://www.googleapis.com/youtube/v3/search?part=snippet&type=video&maxResults=6&order=relevance&relevanceLanguage=${hl}&q=${encodeURIComponent(query)}&key=${encodeURIComponent(key)}`, 7000);
+      if (r.ok) {
+        const j = await r.json();
+        const items = (j.items || []).filter((i) => i.id?.videoId).map((i) => ({
+          title: decodeXml(i.snippet.title).slice(0, 200),
+          uri: `https://www.youtube.com/watch?v=${i.id.videoId}`,
+          source: `YouTube · ${decodeXml(i.snippet.channelTitle)}`,
+          date: String(i.snippet.publishedAt || '').slice(0, 10),
+          snippet: `publiée le ${String(i.snippet.publishedAt || '').slice(0, 10)} · ${decodeXml(i.snippet.description || '')}`.slice(0, 500),
+          platform: 'YouTube',
+        }));
+        if (items.length) return items;
+      }
+    } catch (e) {}
+  }
+  // 2) Sans clé : page de recherche YouTube
+  try {
+    const r = await timedFetch(`https://www.youtube.com/results?search_query=${encodeURIComponent(query)}&hl=${hl}`, 7000, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36', 'Accept-Language': hl, Cookie: 'CONSENT=YES+1' },
+    });
+    if (r.ok) {
+      const items = parseYouTubeHtml(await r.text());
+      if (items.length) return items;
+    }
+  } catch (e) {}
+  // 3) Dernier recours : moteur de recherche limité à youtube.com
+  return (await searchWeb(`site:youtube.com ${query}`, lang).catch(() => [])).map((x) => ({ ...x, platform: 'YouTube' }));
+}
+
+async function searchReddit(query) {
+  try {
+    const r = await timedFetch(`https://www.reddit.com/search.json?q=${encodeURIComponent(query)}&sort=relevance&t=month&limit=6`, 6000, { headers: { 'User-Agent': 'BOUA-Cloud/1.0' } });
+    if (!r.ok) throw new Error();
+    const j = await r.json();
+    return (j?.data?.children || []).map((c) => c.data).filter((d) => d?.permalink).map((d) => ({
+      title: String(d.title || '').slice(0, 200),
+      uri: `https://www.reddit.com${d.permalink}`,
+      source: `Reddit · r/${d.subreddit}`,
+      date: d.created_utc ? new Date(d.created_utc * 1000).toISOString().slice(0, 10) : '',
+      snippet: `${d.score ?? 0} votes · ${d.num_comments ?? 0} commentaires · ${String(d.selftext || '').slice(0, 300)}`,
+      platform: 'Reddit',
+    }));
+  } catch (e) {
+    return [];
+  }
+}
+
+/** Recherche sur les réseaux demandés, en parallèle (publications publiques indexées) */
+export async function searchSocial(platforms, query, lang) {
+  const jobs = platforms.slice(0, 5).map(async (p) => {
+    if (p === 'youtube') return searchYouTube(query, lang);
+    if (p === 'reddit') {
+      const r = await searchReddit(query);
+      if (r.length) return r;
+    }
+    const site = SOCIAL_PLATFORMS[p].site;
+    const res = await searchWeb(`site:${site} ${query}`, lang).catch(() => []);
+    const ok = (u) => {
+      try {
+        const h = new URL(u).hostname.replace(/^www\.|^m\.|^[a-z]{2}-[a-z]{2}\./, '');
+        return h === site || h.endsWith('.' + site) || (p === 'x' && /(^|\.)twitter\.com$/.test(h));
+      } catch (e) {
+        return false;
+      }
+    };
+    return res.filter((x) => ok(x.uri)).map((x) => ({ ...x, source: `${SOCIAL_PLATFORMS[p].label} · ${x.source}`, platform: SOCIAL_PLATFORMS[p].label }));
+  });
+  const all = await Promise.all(jobs.map((j) => j.catch(() => [])));
+  return all.map((list, i) => ({ platform: SOCIAL_PLATFORMS[platforms[i]].label, items: list.slice(0, 5) }));
+}
+
 /** Faits de référence (connus et stables). Injectés seulement si la question touche le sujet. */
 const REFERENCE_FACTS = [
   { re: /\b(aes|alliance des [ée]tats du sahel|sahel|mali|burkina|niger)\b/i, text: "L'Alliance des États du Sahel (AES) regroupe TROIS pays : le Mali, le Burkina Faso et le Niger (la Guinée n'en fait PAS partie). Pacte signé en septembre 2023, confédération créée en juillet 2024 ; les trois pays ont quitté la CEDEAO (effectif fin janvier 2025)." },
@@ -637,7 +776,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 27, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 28, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -834,26 +973,38 @@ export default async function handler(req) {
   // Recherche web BOUA (indépendante de Gemini) pour les questions d'actualité
   let webResults = [];
   const lastUserQ = [...contents].reverse().find((c) => c.role === 'user');
-  const newsy = !isImage && (Boolean(body.mustSearch) || NEWSY_RE.test(String(body.query || lastUserQ?.parts?.map((p) => p.text || '').join(' ') || '').slice(0, 600)));
+  const qText0 = String(body.query || lastUserQ?.parts?.map((p) => p.text || '').join(' ') || '').slice(0, 600);
+  const socialPlatforms = isImage ? [] : detectSocial(qText0);
+  const newsy = !isImage && (Boolean(body.mustSearch) || NEWSY_RE.test(qText0) || socialPlatforms.length > 0);
   if (!isImage && (newsy || (wantWeb && body.alwaysSearch))) {
     const lastUser = [...contents].reverse().find((c) => c.role === 'user');
     const userText = String(body.query || lastUser?.parts?.map((p) => p.text || '').join(' ') || '');
     const lang0 = String(body.lang || 'fr');
     const kw = searchKeywords(userText);
     // En parallèle : titres d'actualité + extraits de pages web (DuckDuckGo) + résumé Wikipédia
-    const [news, web, wiki] = await Promise.all([
-      searchNews(userText, lang0).catch(() => []),
-      searchWeb(kw + ' ' + new Date().getFullYear(), lang0).catch(() => []),
-      searchWikipedia(kw, lang0).catch(() => []),
+    const socialQuery = socialPlatforms.length ? socialKeywords(userText) : '';
+    const [news, web, wiki, social] = await Promise.all([
+      searchNews(socialQuery || userText, lang0).catch(() => []),
+      socialPlatforms.length ? Promise.resolve([]) : searchWeb(kw + ' ' + new Date().getFullYear(), lang0).catch(() => []),
+      socialPlatforms.length ? Promise.resolve([]) : searchWikipedia(kw, lang0).catch(() => []),
+      socialPlatforms.length ? searchSocial(socialPlatforms, socialQuery, lang0).catch(() => []) : Promise.resolve([]),
     ]);
-    webResults = news;
+    const socialItems = social.flatMap((g) => g.items);
+    logEvent('reseaux', socialPlatforms.length ? `${socialPlatforms.join(',')} « ${socialQuery} » → ${social.map((g) => g.platform + ':' + g.items.length).join(' ')}` : '');
+    webResults = [...socialItems, ...news.slice(0, socialItems.length ? 4 : 8)];
     const extra = [...web.filter((w) => w.snippet).slice(0, 5), ...wiki.slice(0, 1)];
     for (const x of extra) if (!webResults.some((w) => w.uri === x.uri)) webResults.push(x);
     const facts = referenceFacts(userText);
-    if ((webResults.length || facts.length) && lastUser) {
+    if ((webResults.length || facts.length || socialPlatforms.length) && lastUser) {
       const today = new Date().toISOString().slice(0, 10);
       let block = `\n\n[INFORMATIONS VÉRIFIÉES — consultées le ${today}. RÈGLES STRICTES : 1) n'affirme QUE ce qui est écrit ci-dessous ou dans les faits de référence ; 2) ne déduis jamais un fait à partir d'un simple titre (un titre qui cite plusieurs pays ne veut pas dire qu'ils sont alliés) ; 3) si une information n'y figure pas, dis « je n'ai pas pu le vérifier » au lieu de deviner ; 4) cite la source et la date de chaque fait important ; 5) en cas de contradiction, la source la plus récente l'emporte.]\n`;
       if (facts.length) block += `\nFAITS DE RÉFÉRENCE (sûrs) :\n${facts.join('\n')}\n`;
+      if (socialPlatforms.length) {
+        block += `\nRÉSULTATS RÉSEAUX SOCIAUX (recherche « ${socialQuery} ») — RÈGLES : ce sont des PUBLICATIONS, pas des faits vérifiés : attribue chaque contenu à son auteur (« selon la vidéo de la chaîne X sur YouTube… »), donne le lien, la date et les chiffres (vues, votes) SEULEMENT s'ils figurent ci-dessous ; ne les invente jamais ; signale quand une publication contredit des sources fiables ; si une plateforme n'a rien donné, dis-le clairement (« je n'ai pas trouvé de publication publique sur TikTok ») et rappelle que Facebook, Instagram, TikTok et X ne montrent qu'une partie de leurs contenus aux moteurs de recherche.\n`;
+        for (const g of social) {
+          block += `\n### ${g.platform}\n` + (g.items.length ? g.items.map((r, i) => `${i + 1}. ${r.title} — ${r.source}${r.date ? ` (${r.date})` : ''}\n   Lien : ${r.uri}${r.snippet ? `\n   ${String(r.snippet).replace(/\s+/g, ' ').slice(0, 400)}` : ''}`).join('\n') : 'Aucune publication publique trouvée.') + '\n';
+        }
+      }
       if (news.length) block += `\nACTUALITÉS (titres, Google Actualités) :\n` + news.map((r, i) => `${i + 1}. ${r.title}${r.source ? ` — ${r.source}` : ''}${r.date ? ` (${r.date})` : ''}`).join('\n') + '\n';
       if (extra.length) block += `\nEXTRAITS DE PAGES (contenu réel) :\n` + extra.map((r) => `• ${r.title}${r.source ? ` — ${r.source}` : ''} : ${String(r.snippet || '').replace(/\s+/g, ' ').slice(0, 700)}`).join('\n');
       lastUser.parts = [...lastUser.parts, { text: block }];
