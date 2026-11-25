@@ -474,6 +474,18 @@ export function socialKeywords(text) {
   return searchKeywords(t) || searchKeywords(text);
 }
 
+/** « il y a 10 m. » → « il y a 10 mois » (YouTube abrège ; l'IA confondait mois et minutes) */
+export function ytAge(t) {
+  return String(t || '')
+    .replace(/(\d+)\s*(?:a|an|ans)\.?(?=\s|$)/gi, (x, n) => `${n} an${n > 1 ? 's' : ''}`)
+    .replace(/(\d+)\s*m\.(?=\s|$)/gi, '$1 mois')
+    .replace(/(\d+)\s*sem\.?(?=\s|$)/gi, (x, n) => `${n} semaine${n > 1 ? 's' : ''}`)
+    .replace(/(\d+)\s*j\.?(?=\s|$)/gi, (x, n) => `${n} jour${n > 1 ? 's' : ''}`)
+    .replace(/(\d+)\s*h\.?(?=\s|$)/gi, (x, n) => `${n} heure${n > 1 ? 's' : ''}`)
+    .replace(/(\d+)\s*min\.?(?=\s|$)/gi, '$1 minutes')
+    .trim();
+}
+
 /** Lecture des résultats de la page de recherche YouTube (sans clé) */
 export function parseYouTubeHtml(html, max = 6) {
   const out = [];
@@ -494,8 +506,8 @@ export function parseYouTubeHtml(html, max = 6) {
         title: txt(v.title).slice(0, 200),
         uri: `https://www.youtube.com/watch?v=${v.videoId}`,
         source: `YouTube · ${txt(v.ownerText || v.longBylineText)}`.slice(0, 120),
-        date: txt(v.publishedTimeText),
-        snippet: [txt(v.publishedTimeText) && `publiée ${txt(v.publishedTimeText)}`, txt(v.viewCountText), txt(v.lengthText) && `durée ${txt(v.lengthText)}`, (v.detailedMetadataSnippets || []).map((d) => txt(d.snippetText)).join(' ')].filter(Boolean).join(' · ').slice(0, 500),
+        date: ytAge(txt(v.publishedTimeText)),
+        snippet: [txt(v.publishedTimeText) && `publiée ${ytAge(txt(v.publishedTimeText))}`, txt(v.viewCountText), txt(v.lengthText) && `durée ${txt(v.lengthText)}`, (v.detailedMetadataSnippets || []).map((d) => txt(d.snippetText)).join(' ')].filter(Boolean).join(' · ').slice(0, 500),
         platform: 'YouTube',
       });
       return;
@@ -776,7 +788,7 @@ export default async function handler(req) {
     const m = keys.length ? await resolveModels(keys[0]) : { text: [], image: [] };
     const ok = engineKeys();
     const moteurs = { gemini: keys.length > 0, chatgpt: Boolean(ok.openai), claude: Boolean(ok.claude), deepseek: Boolean(ok.deepseek) };
-    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 28, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
+    return new Response(JSON.stringify({ service: 'BOUA Cloud', version: 29, moteurs, clesConfigurees: keys.length, modelesTexte: m.text.slice(0, 8), modelesImage: m.image.slice(0, 3), modelesVideo: (m.video || []).slice(0, 3), modelesEcartes: [...badModels.entries()].filter(([, t]) => t > Date.now()).map(([n]) => n), derniersEvenements: EVENTS.slice(-15) }, null, 2), {
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });
   }
@@ -1324,14 +1336,16 @@ export default async function handler(req) {
           let model = '';
           let webUsed = false;
           let emptyTries = 0;
+          let overloads = 0; // erreurs 503 / « trop lent » : Google surchargé
+          const hasBackup = !isImage && order.some((e) => e !== 'gemini');
           outer: for (let k = 0; k < apiKeys.length; k++) {
             for (const m of candidates) {
               if (Date.now() - startedAt > 60000) break outer; // jamais plus d'une minute d'essais
               try {
                 const g = useGoogle && !/lite/.test(m);
                 let r = await callOnce(apiKeys[k], m, g);
-                // Google surchargé (503) : une seconde chance après une courte pause
-                if (r.status === 503) {
+                // Google surchargé (503) : une seconde chance après une courte pause (seulement la 1re fois)
+                if (r.status === 503 && overloads === 0) {
                   await new Promise((res) => setTimeout(res, 1200));
                   r = await callOnce(apiKeys[k], m, g);
                 }
@@ -1402,6 +1416,14 @@ export default async function handler(req) {
                 else if (reason === 'trop lent') markBad(m, 10 * 60 * 1000);
                 tried.push(`Gemini ${m}${apiKeys.length > 1 ? ` (clé ${k + 1})` : ''} → ${reason}`);
                 logEvent('modele-echec', `${m} → ${reason}`);
+                // Google surchargé : on ne fait pas attendre l'utilisateur, on passe tout de suite à DeepSeek / Claude / ChatGPT
+                if (r.status === 503 || r.status === 500 || r.status === 504) {
+                  overloads++;
+                  if (hasBackup && (overloads >= 2 || Date.now() - startedAt > 20000)) {
+                    logEvent('bascule', `Google surchargé (${overloads} échecs) → ${order.filter((e) => e !== 'gemini').join(', ')}`);
+                    break outer;
+                  }
+                }
                 if (r.status === 400 && reason !== 'modèle indisponible') break outer; // requête refusée : on passe au moteur suivant
                 if (r.status === 401 || r.status === 403) break; // clé suivante
               } catch (e) {
